@@ -341,7 +341,7 @@ class JFCloudClient:
             payload = await self._request_once(
                 code, method=method, body=body, params=params, host=host
             )
-        code_value = payload.get("code", payload.get("ret", 0))
+        code_value = payload.get("code", payload.get("ret"))
         if (
             relogin
             and isinstance(code_value, int)
@@ -353,7 +353,7 @@ class JFCloudClient:
             payload = await self._request_once(
                 code, method=method, body=body, params=params, host=host
             )
-            code_value = payload.get("code", payload.get("ret", 0))
+            code_value = payload.get("code", payload.get("ret"))
 
         if isinstance(code_value, int) and code_value not in _SUCCESS_CODES:
             message = payload.get("msg") or payload.get("message") or "cloud error"
@@ -434,7 +434,7 @@ class JFCloudClient:
                     if payload is None:
                         continue
 
-                    code_value = payload.get("code", payload.get("ret", 0))
+                    code_value = payload.get("code", payload.get("ret"))
                     token = self._extract_token(payload)
                     if token and (
                         not isinstance(code_value, int) or code_value in _SUCCESS_CODES
@@ -543,11 +543,21 @@ class JFCloudClient:
         return [r for r in rows if isinstance(r, Mapping)]
 
     async def get_device_token(self, sns: Iterable[str]) -> dict[str, str]:
-        payload = await self.raw_request(
-            ENDPOINTS["device_token"][1], body={"sns": list(sns)}
-        )
-        data = payload.get("data") or []
-        return {item["sn"]: item["token"] for item in data if "sn" in item and "token" in item}
+        # 实测：逐台调用，body 需要 {deviceNo, isLatest}
+        out: dict[str, str] = {}
+        for sn in sns:
+            try:
+                payload = await self.raw_request(
+                    ENDPOINTS["device_token"][1], body={"deviceNo": sn, "isLatest": 1}
+                )
+            except Exception:  # noqa: BLE001
+                continue
+            data = payload.get("data") or {}
+            if isinstance(data, Mapping):
+                token = data.get("token") or data.get("adminToken")
+                if token:
+                    out[sn] = token
+        return out
 
     async def get_prop_status(self, sns: Iterable[str]) -> list[dict[str, Any]]:
         payload = await self.raw_request(
