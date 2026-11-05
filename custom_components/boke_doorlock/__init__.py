@@ -67,10 +67,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one iCSee Home account."""
     data = {**entry.data, **entry.options}
     client = JFCloudClient(
-        uuid=data.get(CONF_UUID) or "",
+        uuid=data.get(CONF_UUID) or "xmeye",
         app_key=data.get(CONF_APP_KEY, DEFAULT_APP_KEY),
         app_secret=data.get(CONF_APP_SECRET, DEFAULT_APP_SECRET),
-        host=data.get(CONF_HOST, DEFAULT_HOST),
+        host=data.get(CONF_HOST) or "cn-jvss.jftechws.com",
         moved_card=int(data.get(CONF_MOVE_CARD, DEFAULT_MOVE_CARD)),
         login_name=data.get(CONF_USERNAME, ""),
         password=data.get(CONF_PASSWORD, ""),
@@ -78,15 +78,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         password_encoding=data.get(CONF_PASSWORD_ENCODING, DEFAULT_PASSWORD_ENCODING),
     )
 
-    # re-use the cached token, fall back to a fresh login
-    cached = data.get(TOKEN_KEY)
-    if cached:
-        client.token = cached
-    else:
-        try:
-            await client.login()
-        except JFCloudAuthError as err:
-            raise ConfigEntryAuthFailed(str(err)) from err
+    # 每次启动都重新登录：缓存的 token 可能已失效或属于别的区域分片
+    try:
+        await client.login()
+    except JFCloudAuthError as err:
+        raise ConfigEntryAuthFailed(str(err)) from err
 
     sns = [sn.strip() for sn in (data.get(CONF_SNS) or "").split(",") if sn.strip()]
     # 轮询间隔：0 或未配置 → 事件驱动（不做周期性请求，避免触发云端风控）
