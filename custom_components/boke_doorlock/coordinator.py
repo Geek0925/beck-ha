@@ -152,7 +152,10 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
                     alt = [h for h in ("cn-ams.jftechws.com", "rs.jftechws.com") if h != self.client.login_host]
                     if alt:
                         _LOGGER.warning("empty device list on %s, retrying login on %s", self.client.login_host, alt[0])
-                        await self.client.login()
+                        try:
+                            await self.client.login()
+                        except Exception as err:  # noqa: BLE001
+                            _LOGGER.debug("relogin failed, keep original state: %s", err)
                         items = await self.client.list_devices()
                         devices = {}
                         for item in items:
