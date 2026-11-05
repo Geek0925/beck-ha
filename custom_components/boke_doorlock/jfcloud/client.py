@@ -44,6 +44,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import hashlib
 import uuid as uuid_module
 from typing import Any, Iterable, Mapping
@@ -602,15 +603,32 @@ class JFCloudClient:
         page: int = 1,
         size: int = 50,
     ) -> list[dict[str, Any]]:
+        # 实测：时间必须是 yyyy-MM-dd 字符串，且必须带 propCode / timeType
+        def _day(ms: int) -> str:
+            return datetime.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d")
+
         payload = await self.raw_request(
             ENDPOINTS["record_report"][1],
             body={
-                "sn": sn,
-                "startTime": start_ms,
-                "endTime": end_ms,
-                "pageNum": page,
-                "pageSize": size,
+                "deviceNo": sn,
+                "propCode": "doorLockOpen",
+                "timeType": "day",
+                "startTime": _day(start_ms),
+                "endTime": _day(end_ms),
+                "page": page,
+                "limit": size,
             },
+        )
+        data = payload.get("data")
+        if isinstance(data, Mapping):
+            rows = data.get("data") or data.get("list") or []
+            return [r for r in rows if isinstance(r, Mapping)]
+        return _as_list(payload)
+
+    async def get_lock_users(self, sn: str) -> list[dict[str, Any]]:
+        """门锁成员/开锁用户列表（实测可用：body 只需 sn）。"""
+        payload = await self.raw_request(
+            "v3/device_cfg/doorLockUser/query", body={"sn": sn}
         )
         return _as_list(payload)
 
