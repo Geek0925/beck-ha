@@ -111,6 +111,7 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
         self._messages: dict[str, list[Notification]] = {}
         self._known_message_ids: set[str] = set()
         self._messages_seeded = False
+        self.last_notification: dict[str, Any] | None = None
         self._alerts: dict[str, dict[str, datetime]] = {}
         self._alert_timers: dict[tuple[str, str], Any] = {}
         self.alert_reset = alert_reset
@@ -260,6 +261,12 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
         if not rows:
             self._messages_seeded = True
             return
+
+        try:
+            from .jfcloud.push import flatten_payload
+            self.last_notification = flatten_payload(rows[0]) if rows else self.last_notification
+        except Exception:  # noqa: BLE001
+            pass
 
         fresh: list[Notification] = []
         for row in rows:

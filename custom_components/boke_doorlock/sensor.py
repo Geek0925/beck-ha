@@ -149,4 +149,15 @@ class BokeRecordSensor(CoordinatorEntity[BokeCoordinator], SensorEntity):
     @property
     def native_value(self) -> Any:
         record = self.coordinator.data.last_record(self._sn)
-        return None if record is None else self.entity_description.value_fn(record)
+        if record is not None:
+            return self.entity_description.value_fn(record)
+        # 回退：用 notify-log 里最新一条（含历史消息）
+        note = getattr(self.coordinator, "last_notification", None) or {}
+        if not note:
+            return None
+        key = self.entity_description.key
+        if key.endswith("user"):
+            return note.get("user") or note.get("nickName")
+        if key.endswith("method"):
+            return note.get("method") or note.get("logType")
+        return note.get("time") or note.get("timestamp")
