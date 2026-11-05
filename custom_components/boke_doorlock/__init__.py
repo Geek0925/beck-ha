@@ -9,8 +9,6 @@ from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
-from .jfcloud.message_map import classify
-from .jfcloud.mqtt import JFMQTTClient
 from .const import (
     CONF_ALERT_RESET,
     CONF_APP_KEY,
@@ -32,7 +30,6 @@ from .const import (
     CONF_SCAN_INTERVAL,
     CONF_SNS,
     CONF_UUID,
-    EVENT_NOTIFICATION,
     CONF_USERNAME,
     DEFAULT_ALERT_RESET,
     DEFAULT_APP_KEY,
@@ -66,49 +63,6 @@ PLATFORMS_LIST: list[Platform] = [
 TOKEN_KEY = "token"
 
 
-
-
-async def _start_mqtt(hass, entry, coordinator, data) -> None:
-    """启动 WSS MQTT 实时通道（零轮询）：事件到达即更新实体 / 触发 bus 事件。"""
-    token = getattr(coordinator.client, "token", None)
-    if not token:
-        return
-    sns = [sn.strip() for sn in (data.get(CONF_SNS) or "").split(",") if sn.strip()]
-    if not sns:
-        devices = coordinator.devices or {}
-    sns = list(devices.keys()) if hasattr(devices, "keys") else []
-    sns = [s for s in sns if s]
-    if not sns:
-        return
-
-    def _on_event(topic: str, payload: bytes) -> None:
-        event = classify(topic, payload)
-        if not event:
-            return
-        hass.loop.call_soon_threadsafe(_handle_event, event)
-
-    def _handle_event(event) -> None:
-        try:
-            if event.get("kind") == "alarm":
-                hass.bus.async_fire(
-                    EVENT_NOTIFICATION,
-                    {"sn": event.get("sn"), "reason": event.get("reason"),
-                     "user": event.get("user"), "time": event.get("time"), "source": "mqtt"},
-                )
-                return
-            coordinator.async_set_updated_data(
-                {"props": event.get("props", {}), "sn": event.get("sn")}
-            )
-        except Exception:  # noqa: BLE001
-            _LOGGER.exception("处理 MQTT 事件失败")
-
-    listener = JFMQTTClient(token, sns, _on_event)
-    started = await listener.async_start()
-    if started:
-        _LOGGER.info("MQTT 实时通道已连接: %s", listener.topics)
-        entry.async_on_unload(lambda: hass.async_create_task(listener.async_stop()))
-
-
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up one iCSee Home account."""
     data = {**entry.data, **entry.options}
@@ -116,7 +70,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         uuid=data.get(CONF_UUID) or "",
         app_key=data.get(CONF_APP_KEY, DEFAULT_APP_KEY),
         app_secret=data.get(CONF_APP_SECRET, DEFAULT_APP_SECRET),
-        host=data.get(CONF_HOST) or DEFAULT_HOST,
+        host=data.get(CONF_HOST, DEFAULT_HOST),
         moved_card=int(data.get(CONF_MOVE_CARD, DEFAULT_MOVE_CARD)),
         login_name=data.get(CONF_USERNAME, ""),
         password=data.get(CONF_PASSWORD, ""),
@@ -152,11 +106,51 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_LIST)
     await async_setup_services(hass)
-    await _start_mqtt(hass, entry, coordinator, data)
     await _start_push(hass, coordinator, data)
+    await _start_mqtt_safe(hass, entry, coordinator, data)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
+    """启动 WSS MQTT 实时通道；任何异常都不影响集成加载。"""
+    try:
+        from .jfcloud.message_map import classify
+        from .jfcloud.mqtt import JFMQTTClient
+        from .const import EVENT_NOTIFICATION
+
+        token = getattr(coordinator.client, "token", None)
+        devices = getattr(coordinator, "devices", {}) or {}
+        sns = list(devices.keys()) if hasattr(devices, "keys") else []
+        if not token or not sns:
+            return
+
+        def _handle(event) -> None:
+            try:
+                if event.get("kind") == "alarm":
+                    hass.bus.async_fire(EVENT_NOTIFICATION, {
+                        "sn": event.get("sn"), "reason": event.get("reason"),
+                        "user": event.get("user"), "time": event.get("time"),
+                        "source": "mqtt",
+                    })
+                else:
+                    coordinator.async_set_updated_data(
+                        {"props": event.get("props", {}), "sn": event.get("sn")}
+                    )
+            except Exception:  # noqa: BLE001
+                pass
+
+        def _on_event(topic: str, payload: bytes) -> None:
+            event = classify(topic, payload)
+            if event:
+                hass.loop.call_soon_threadsafe(_handle, event)
+
+        listener = JFMQTTClient(token, sns, _on_event)
+        if await listener.async_start():
+            entry.async_on_unload(lambda: hass.async_create_task(listener.async_stop()))
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("MQTT 实时通道启动失败，忽略", exc_info=True)
 
 
 async def _start_push(
