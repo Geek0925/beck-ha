@@ -145,10 +145,32 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
                 )
                 devices = unfiltered
 
+            if not devices and not getattr(self, "_relogin_retry", False):
+                # 某些区域网关返回空列表：换登录入口重试一次
+                self._relogin_retry = True
+                try:
+                    alt = [h for h in ("cn-ams.jftechws.com", "rs.jftechws.com") if h != self.client.login_host]
+                    if alt:
+                        _LOGGER.warning("empty device list on %s, retrying login on %s", self.client.login_host, alt[0])
+                        await self.client.login()
+                        items = await self.client.list_devices()
+                        devices = {}
+                        for item in items:
+                            try:
+                                dev = LockDevice.from_api(item)
+                            except Exception:  # noqa: BLE001
+                                continue
+                            if dev.sn:
+                                devices[dev.sn] = dev
+                        unfiltered = dict(devices)
+                finally:
+                    self._relogin_retry = False
+
             if not devices:
                 raise UpdateFailed(
                     "no door locks returned by the cloud account "
-                    f"(cloud devices={len(items)}, parsed={len(unfiltered)}, configured_sns={list(self.sns)})"
+                    f"(cloud devices={len(items)}, parsed={len(unfiltered)}, "
+                    f"configured_sns={list(self.sns)}, login_host={self.client.login_host})"
                 )
 
             statuses: dict[str, LockStatus] = {}
