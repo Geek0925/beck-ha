@@ -1,0 +1,146 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "博克门锁 · 账号登录",
+        "description": "用 iCSee Home（原 JLink）账号登录。手机号或邮箱 + 密码；抓到的接口是 `/mobilephone/login/v3/...`，密码按 MD5 提交（可在高级里改）。",
+        "data": {
+          "username": "手机号 / 邮箱",
+          "password": "密码",
+          "area_code": "国家区号",
+          "sns": "只同步这些 SN（逗号分隔，可留空）"
+        }
+      },
+      "advanced": {
+        "title": "博克门锁 · 高级",
+        "description": "登录失败时再来这里：可换 API 域名、密码是否 MD5、以及请求签名用的 appKey/appSecret（从 APK 提取的候选值，可覆盖）。",
+        "data": {
+          "username": "手机号 / 邮箱",
+          "password": "密码",
+          "area_code": "国家区号",
+          "host": "API 域名",
+          "password_encoding": "密码提交方式",
+          "app_key": "appKey",
+          "app_secret": "appSecret"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "账号或密码错误",
+      "cannot_connect": "无法连接云服务",
+      "no_devices": "该账号下没有设备",
+      "cloud_error": "云端返回错误，请查看日志"
+    },
+    "abort": {
+      "already_configured": "该账号已配置"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "博克门锁 · 选项",
+        "description": "MQTT 推送为实验特性：App 用私有 broker 推送状态，topic 与鉴权在加固层内。打开「记录 payload」后可在日志里看到真实 topic，再据此修改订阅。",
+        "data": {
+          "scan_interval": "轮询间隔（秒）",
+          "record_interval": "开锁记录拉取间隔（秒）",
+          "sns": "只同步这些 SN（逗号分隔，可留空）",
+          "mqtt_enabled": "启用 MQTT 实时推送",
+          "mqtt_host": "MQTT broker",
+          "mqtt_port": "MQTT 端口",
+          "mqtt_tls": "MQTT 使用 TLS",
+          "mqtt_username": "MQTT 用户名",
+          "mqtt_password": "MQTT 密码/设备 token",
+          "mqtt_topics": "订阅 topic（逗号分隔，支持 # 通配）",
+          "mqtt_log_payloads": "记录每条 payload 到日志（排障用）",
+          "alert_reset": "告警自动复位时间（秒，0=一直亮）"
+        }
+      }
+    }
+  },
+  "entity": {
+    "event": {
+      "unlock": {
+        "name": "开锁事件"
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "电量"
+      },
+      "unlock_count": {
+        "name": "开锁次数"
+      },
+      "last_unlock": {
+        "name": "最近开锁信息"
+      },
+      "last_unlock_user": {
+        "name": "最近开锁用户"
+      },
+      "signal": {
+        "name": "Wi-Fi 信号"
+      },
+      "last_unlock_method": {
+        "name": "最近开锁方式"
+      },
+      "last_unlock_at": {
+        "name": "最近开锁时间"
+      }
+    },
+    "binary_sensor": {
+      "tampered": {
+        "name": "防拆报警"
+      },
+      "forced_open": {
+        "name": "强制开门"
+      },
+      "malfunction": {
+        "name": "故障"
+      },
+      "door": {
+        "name": "门状态"
+      },
+      "core_cover": {
+        "name": "锁芯盖"
+      },
+      "door_reminder": {
+        "name": "门未关提醒"
+      },
+      "alert_tamper": {
+        "name": "告警·防撬"
+      },
+      "alert_forced_open": {
+        "name": "告警·强制开门"
+      },
+      "alert_low_battery": {
+        "name": "告警·低电量"
+      },
+      "alert_offline": {
+        "name": "告警·设备离线"
+      },
+      "alert_fault": {
+        "name": "告警·故障"
+      },
+      "alert_door_open": {
+        "name": "告警·门未关"
+      }
+    }
+  },
+  "services": {
+    "get_unlock_records": {
+      "name": "查询开锁记录",
+      "description": "按时间窗口从云端拉取开锁记录（含开锁方式、用户、图片）。",
+      "fields": {
+        "sn": {
+          "name": "设备 SN",
+          "description": "留空表示所有门锁"
+        },
+        "hours": {
+          "name": "回溯小时数"
+        },
+        "limit": {
+          "name": "最多返回条数"
+        }
+      }
+    }
+  }
+}

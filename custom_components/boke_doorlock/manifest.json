@@ -1,0 +1,17 @@
+{
+  "domain": "boke_doorlock",
+  "name": "博克门锁 (BOKE Door Lock)",
+  "codeowners": [
+    "@your-github-handle"
+  ],
+  "config_flow": true,
+  "documentation": "https://github.com/your-github-handle/boke-doorlock-ha",
+  "issue_tracker": "https://github.com/your-github-handle/boke-doorlock-ha/issues",
+  "iot_class": "cloud_polling",
+  "loggers": [
+    "custom_components.boke_doorlock"
+  ],
+  "quality_scale": "bronze",
+  "requirements": [],
+  "version": "0.4.3"
+}
