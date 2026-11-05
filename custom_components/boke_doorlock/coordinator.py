@@ -120,14 +120,30 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
     async def _async_update_data(self) -> BokeData:
         try:
             items = await self.client.list_devices()
+            _LOGGER.debug("cloud returned %d device(s)", len(items))
             devices: dict[str, LockDevice] = {}
+            unfiltered: dict[str, LockDevice] = {}
             for item in items:
-                device = LockDevice.from_api(item)
-                if not device.sn:
+                try:
+                    device = LockDevice.from_api(item)
+                except Exception:  # noqa: BLE001
+                    _LOGGER.debug("skip malformed device: %s", sorted(item)[:8])
                     continue
+                if not device.sn:
+                    _LOGGER.debug("skip device without sn: %s", sorted(item)[:8])
+                    continue
+                unfiltered[device.sn] = device
                 if self.sns and device.sn not in self.sns:
                     continue
                 devices[device.sn] = device
+
+            if not devices and unfiltered:
+                # 配置里的 SN 与云端不一致时，宁可不过滤也不让集成废掉
+                _LOGGER.warning(
+                    "configured SNs %s not in cloud (%s); using all devices",
+                    list(self.sns), list(unfiltered),
+                )
+                devices = unfiltered
 
             if not devices:
                 raise UpdateFailed("no door locks returned by the cloud account")
