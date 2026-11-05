@@ -265,7 +265,19 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
         try:
             import json as _json
 
-            row = rows[0]
+            def _has_user(item: dict) -> bool:
+                info = item.get("logInfo")
+                if not isinstance(info, str):
+                    return False
+                try:
+                    parsed_info = _json.loads(info)
+                except Exception:  # noqa: BLE001
+                    return False
+                props_info = parsed_info.get("props") or []
+                val = (props_info[0] or {}).get("propValue") if props_info else {}
+                return isinstance(val, dict) and bool(val.get("nickName") or val.get("userName"))
+
+            row = next((item for item in rows if _has_user(item)), rows[0])
             info = row.get("logInfo")
             parsed = _json.loads(info) if isinstance(info, str) and info.strip().startswith("{") else {}
             props = parsed.get("props") or []

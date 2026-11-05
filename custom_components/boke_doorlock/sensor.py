@@ -83,7 +83,6 @@ RECORD_SENSORS: tuple[BokeRecordDescription, ...] = (
     BokeRecordDescription(
         key="last_unlock_at",
         translation_key="last_unlock_at",
-        device_class=SensorDeviceClass.TIMESTAMP,
         icon="mdi:clock-check-outline",
         value_fn=lambda record: record.timestamp,
     ),
