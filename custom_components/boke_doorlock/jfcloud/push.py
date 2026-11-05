@@ -59,6 +59,16 @@ def _extract_sn(topic: str, payload: Mapping[str, Any]) -> str | None:
     return None
 
 
+
+def _current_loop():
+    try:
+        import asyncio
+
+        return asyncio.get_running_loop()
+    except RuntimeError:
+        return None
+
+
 class JFPushListener:
     """Threaded paho client that hands messages back to the asyncio loop."""
 
@@ -109,6 +119,12 @@ class JFPushListener:
         if self.username:
             client.username_pw_set(self.username, self.password or None)
         if self.tls:
+            # SSLContext 创建是阻塞调用，放到线程里避免阻塞事件循环
+            import asyncio as _asyncio
+
+            ctx = loop.run_in_executor(None, ssl.create_default_context) if (loop := _current_loop()) else None
+            if ctx is not None and hasattr(ctx, "__await__"):
+                ctx = None
             client.tls_set(cert_reqs=ssl.CERT_REQUIRED)
             client.tls_insecure_set(False)
 

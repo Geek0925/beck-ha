@@ -590,8 +590,12 @@ class JFCloudClient:
         """
         payload = await self.raw_request(
             ENDPOINTS["notify_log"][1],
-            body={"pageNum": page, "pageSize": size},
+            body={"page": page, "limit": size},
         )
+        data = payload.get("data")
+        if isinstance(data, Mapping):
+            rows = data.get("data") or data.get("list") or []
+            return [r for r in rows if isinstance(r, Mapping)]
         return _as_list(payload)
 
     async def get_open_records(
