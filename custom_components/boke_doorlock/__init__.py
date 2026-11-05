@@ -104,9 +104,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await async_setup_services(hass)
     await _start_push(hass, coordinator, data)
     await _start_mqtt_safe(hass, entry, coordinator, data)
+    await _publish_ha_discovery(hass, coordinator)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
+
+
+async def _publish_ha_discovery(hass, coordinator) -> None:
+    """把门锁注册到 HA 内置 MQTT（用户无需配置任何 broker 凭据）。"""
+    try:
+        from .jfcloud.ha_mqtt import async_publish_discovery, ha_mqtt_available
+
+        if not ha_mqtt_available(hass):
+            return
+        devices = getattr(coordinator, "devices", {}) or {}
+        for sn, dev in (devices.items() if hasattr(devices, "items") else []):
+            name = getattr(dev, "name", None) or sn
+            await async_publish_discovery(hass, sn, name)
+        _LOGGER.info("已向 HA 内置 MQTT 发布门锁 Discovery")
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("HA MQTT Discovery 发布失败", exc_info=True)
 
 
 async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
