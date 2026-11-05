@@ -157,6 +157,46 @@ def _parse_payload(text: str, key: str):
 
 
 
+async def _urllib_post(url: str, payload: bytes, headers: dict[str, str], timeout: float) -> str:
+    """用 urllib 重发同样的请求（实测该网关对某些 HTTP 客户端返回 500）。"""
+    import asyncio as _asyncio
+    import ssl as _ssl
+    import urllib.error as _urlerr
+    import urllib.request as _urlreq
+
+    def _call() -> str:
+        req = _urlreq.Request(url, data=payload, headers=headers, method="POST")
+        ctx = _ssl.create_default_context()
+        try:
+            with _urlreq.urlopen(req, timeout=timeout, context=ctx) as resp:
+                return resp.read().decode("utf-8", "replace")
+        except _urlerr.HTTPError as err:
+            return err.read().decode("utf-8", "replace")
+
+    return await _asyncio.get_running_loop().run_in_executor(None, _call)
+
+
+async def _urllib_request(
+    url: str, *, method: str, payload: bytes | None, headers: dict[str, str], timeout: float
+) -> str:
+    """用 urllib 发请求（HA 的 aiohttp 会被该网关以 500 拒绝）。"""
+    import asyncio as _asyncio
+    import ssl as _ssl
+    import urllib.error as _urlerr
+    import urllib.request as _urlreq
+
+    def _call() -> str:
+        req = _urlreq.Request(url, data=payload, headers=headers, method=method.upper())
+        ctx = _ssl.create_default_context()
+        try:
+            with _urlreq.urlopen(req, timeout=timeout, context=ctx) as resp:
+                return resp.read().decode("utf-8", "replace")
+        except _urlerr.HTTPError as err:
+            return err.read().decode("utf-8", "replace")
+
+    return await _asyncio.get_running_loop().run_in_executor(None, _call)
+
+
 class JFCloudClient:
     """Signed REST client with account login or open-platform credentials."""
 
@@ -256,41 +296,28 @@ class JFCloudClient:
         params: Mapping[str, Any] | None,
         host: str | None = None,
     ) -> dict[str, Any]:
-        session = await self._ensure_session()
+        """一次签名调用：统一走 urllib（该网关对 aiohttp 会返回 500）。"""
         time_millis, signature = self._sign_pair()
         url = self._build_url(code.lstrip("/"), time_millis, signature, host)
         if params:
             url = f"{url}?{urlencode(params)}"
-        send_kwargs: dict[str, Any] = {"json": body}
+        payload: bytes | None = None
         key = ""
         if body is not None and _needs_encryption(code) and self.encrypt_secret:
             key = derive_key(time_millis, self.encrypt_secret)
-            send_kwargs = {"data": encrypt_body(body, key).encode("ascii")}
-        try:
-            async with session.request(
-                method,
-                url,
-                headers=self._headers(time_millis, signature),
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-                **send_kwargs,
-            ) as resp:
-                if resp.status >= 500:
-                    text_probe = (await resp.text())[:200]
-                    raise JFCloudConnectionError(
-                        f"cloud HTTP {resp.status}: {text_probe}"
-                    )
-                if resp.status in (401, 403):
-                    raise JFCloudAuthError(
-                        f"cloud rejected credentials (HTTP {resp.status})", code=resp.status
-                    )
-                resp.raise_for_status()
-                text = await resp.text()
-        except asyncio.TimeoutError as err:  # pragma: no cover - network dependent
-            raise JFCloudConnectionError("timed out talking to the cloud") from err
-        except aiohttp.ClientError as err:
-            raise JFCloudConnectionError(str(err)) from err
-        payload = _parse_payload(text, key)
-        return payload
+            payload = encrypt_body(body, key).encode("ascii")
+        elif body is not None:
+            import json as _json
+
+            payload = _json.dumps(body).encode("utf-8")
+        text = await _urllib_request(
+            url,
+            method=method,
+            payload=payload,
+            headers=self._headers(time_millis, signature),
+            timeout=self.timeout,
+        )
+        return _parse_payload(text, key)
 
     async def raw_request(
         self,
@@ -435,29 +462,29 @@ class JFCloudClient:
         import json as _json
         from urllib.parse import quote
 
-        session = await self._ensure_session()
         time_millis, signature = self._sign_pair()
         key = derive_key(time_millis, self.encrypt_secret or self.app_secret)
         form = f"account={quote(self.login_name)}&pass={quote(self.password)}"
-        body = encrypt_body(form, key)
-        url = f"https://{host}/{code}/{time_millis}/{signature}.rs"
         headers = self._headers(time_millis, signature)
         headers["Content-type"] = "application/x-www-form-urlencoded"
         headers["Authorization"] = ""
+        url = f"https://{host}/{code}/{time_millis}/{signature}.rs"
         try:
-            async with session.post(
+            text = await _urllib_request(
                 url,
-                data=body,
+                method="POST",
+                payload=encrypt_body(form, key).encode("ascii"),
                 headers=headers,
-                timeout=aiohttp.ClientTimeout(total=self.timeout),
-            ) as resp:
-                text = await resp.text()
-        except (asyncio.TimeoutError, aiohttp.ClientError) as err:  # pragma: no cover
+                timeout=self.timeout,
+            )
+        except Exception as err:  # noqa: BLE001
             raise JFCloudConnectionError(str(err)) from err
         plain = decrypt_body(text.strip(), key) if is_ciphertext(text.strip()) else None
-        if plain is None:
-            return None
-        return _json.loads(plain) if isinstance(plain, str) else plain
+        if isinstance(plain, Mapping):
+            return dict(plain)
+        if isinstance(plain, str) and plain:
+            return _json.loads(plain)
+        return None
 
     async def _exchange_public_key(self) -> None:
         """用 accessToken 换会话密钥 publicKey（小程序 handleLogin 的做法）。
