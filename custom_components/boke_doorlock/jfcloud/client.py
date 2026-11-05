@@ -234,6 +234,8 @@ class JFCloudClient:
             "appKey": self.app_key,
             "Content-type": "application/json; charset=UTF-8",
             "Accept-Language": "zh",
+            # 云端对 gzip 协商有兼容问题（aiohttp 默认带 gzip，实测会 500）
+            "Accept-Encoding": "identity",
         }
         # api.jftechws.com 那套 Spring 接口要求把时间戳与签名同时放在 header 里
         if time_millis:
@@ -263,7 +265,7 @@ class JFCloudClient:
         key = ""
         if body is not None and _needs_encryption(code) and self.encrypt_secret:
             key = derive_key(time_millis, self.encrypt_secret)
-            send_kwargs = {"data": encrypt_body(body, key)}
+            send_kwargs = {"data": encrypt_body(body, key).encode("ascii")}
         try:
             async with session.request(
                 method,
@@ -272,6 +274,11 @@ class JFCloudClient:
                 timeout=aiohttp.ClientTimeout(total=self.timeout),
                 **send_kwargs,
             ) as resp:
+                if resp.status >= 500:
+                    text_probe = (await resp.text())[:200]
+                    raise JFCloudConnectionError(
+                        f"cloud HTTP {resp.status}: {text_probe}"
+                    )
                 if resp.status in (401, 403):
                     raise JFCloudAuthError(
                         f"cloud rejected credentials (HTTP {resp.status})", code=resp.status
