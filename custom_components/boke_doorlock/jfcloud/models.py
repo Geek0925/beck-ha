@@ -76,7 +76,7 @@ class LockDevice:
 
     @classmethod
     def from_api(cls, item: Mapping[str, Any]) -> "LockDevice":
-        sn = str(item.get("sn") or item.get("deviceSn") or item.get("devId") or "")
+        sn = str(item.get("sn") or item.get("deviceNo") or item.get("deviceSn") or item.get("devId") or "")
         online = item.get("online", item.get("status", 0))
         return cls(
             sn=sn,
