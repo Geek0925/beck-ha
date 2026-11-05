@@ -263,8 +263,21 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
             return
 
         try:
-            from .jfcloud.push import flatten_payload
-            self.last_notification = flatten_payload(rows[0]) if rows else self.last_notification
+            import json as _json
+
+            row = rows[0]
+            info = row.get("logInfo")
+            parsed = _json.loads(info) if isinstance(info, str) and info.strip().startswith("{") else {}
+            props = parsed.get("props") or []
+            value = (props[0] or {}).get("propValue") if props else {}
+            if not isinstance(value, dict):
+                value = {}
+            self.last_notification = {
+                "user": value.get("nickName") or value.get("userName") or parsed.get("nickName"),
+                "method": row.get("logType") or (props[0] or {}).get("propCode") if props else row.get("logType"),
+                "time": parsed.get("time") or parsed.get("createTime") or row.get("createTime"),
+                "raw": row,
+            }
         except Exception:  # noqa: BLE001
             pass
 
