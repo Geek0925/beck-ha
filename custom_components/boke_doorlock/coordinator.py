@@ -146,7 +146,10 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
                 devices = unfiltered
 
             if not devices:
-                raise UpdateFailed("no door locks returned by the cloud account")
+                raise UpdateFailed(
+                    "no door locks returned by the cloud account "
+                    f"(cloud devices={len(items)}, parsed={len(unfiltered)}, configured_sns={list(self.sns)})"
+                )
 
             statuses: dict[str, LockStatus] = {}
             try:
