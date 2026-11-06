@@ -185,7 +185,10 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
         listener = JFMQTTClient(token, sns, _on_event)
         if await listener.async_start():
             _LOGGER.info("杰峰 MQTT 已连接并桥接到 HA: %s", listener.topics)
-            entry.async_on_unload(lambda: hass.async_create_task(listener.async_stop()))
+            async def _stop_listener() -> None:
+                await listener.async_stop()
+
+            entry.async_on_unload(_stop_listener)
         else:
             _LOGGER.debug("杰峰 MQTT 未连接（不影响其他功能）")
     except Exception:  # noqa: BLE001
