@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import (
@@ -52,8 +52,8 @@ from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
 
+#: 只有云端 REST 能读到的能力才建实体：锁状态/门磁/防拆走 P2P，故不提供 lock 实体
 PLATFORMS_LIST: list[Platform] = [
-    Platform.LOCK,
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.EVENT,
@@ -105,6 +105,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _start_push(hass, coordinator, data)
     await _start_mqtt_safe(hass, entry, coordinator, data)
     await _publish_ha_discovery(hass, coordinator)
+    await _publish_ha_state(hass, coordinator)
+
+    @callback
+    def _on_update() -> None:
+        hass.async_create_task(_publish_ha_state(hass, coordinator))
+
+    entry.async_on_unload(coordinator.async_add_listener(_on_update))
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
@@ -117,13 +124,33 @@ async def _publish_ha_discovery(hass, coordinator) -> None:
 
         if not ha_mqtt_available(hass):
             return
-        devices = getattr(coordinator, "devices", {}) or {}
+        devices = getattr(coordinator, "devices", None) or (
+            coordinator.data.devices if coordinator.data else {}
+        )
         for sn, dev in (devices.items() if hasattr(devices, "items") else []):
             name = getattr(dev, "name", None) or sn
             await async_publish_discovery(hass, sn, name)
         _LOGGER.info("已向 HA 内置 MQTT 发布门锁 Discovery")
     except Exception:  # noqa: BLE001
         _LOGGER.debug("HA MQTT Discovery 发布失败", exc_info=True)
+
+
+async def _publish_ha_state(hass, coordinator) -> None:
+    """把每台锁的最新状态推到 HA 内置 MQTT。"""
+    try:
+        from .jfcloud.ha_mqtt import async_publish_snapshot, ha_mqtt_available
+
+        if not ha_mqtt_available(hass) or not coordinator.data:
+            return
+        for sn in coordinator.data.devices:
+            await async_publish_snapshot(
+                hass,
+                sn,
+                coordinator.data.status(sn),
+                coordinator.data.last_record(sn),
+            )
+    except Exception:  # noqa: BLE001
+        _LOGGER.debug("HA MQTT 状态推送失败", exc_info=True)
 
 
 async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:

@@ -606,6 +606,43 @@ class JFCloudClient:
                 out[want[0]] = str(token)
         return out
 
+    async def get_status_global(self, sns: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """``gwp-viot/v3/rtc/device/statusGlobal`` — 在线状态（实测可用）。
+
+        返回 ``{sn: {"online": bool, "wan_ip": str|None, "wake_up": str}}``。
+        """
+        want = [s for s in sns if s]
+        if not want:
+            return {}
+        tokens = await self.get_device_token(want)
+        out: dict[str, dict[str, Any]] = {}
+        for sn, token in tokens.items():
+            time_millis, signature = self._sign_pair()
+            url = f"https://{OPEN_API_HOST}/gwp-viot/v3/rtc/device/statusGlobal"
+            try:
+                text = await _urllib_request(
+                    url,
+                    method="POST",
+                    payload=json.dumps({"otherStatus": True, "token": [token]}).encode(),
+                    headers=self._api_headers(time_millis, signature),
+                    timeout=self.timeout,
+                )
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("statusGlobal for %s failed: %s", sn, err)
+                continue
+            payload = _parse_payload(text, "")
+            rows = (payload.get("data") or []) if isinstance(payload, Mapping) else []
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                status = str(row.get("status") or "").lower()
+                out[sn] = {
+                    "online": status == "online",
+                    "wan_ip": row.get("wanIp"),
+                    "wake_up": row.get("wakeUpStatus"),
+                }
+        return out
+
     async def get_alarm_records(
         self,
         sn: str,

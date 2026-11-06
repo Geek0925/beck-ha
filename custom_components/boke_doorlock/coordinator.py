@@ -185,11 +185,23 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
                 rows = []
             for row in rows:
                 sn = str(row.get("sn") or row.get("deviceSn") or "")
-                props = row.get("propStatus") or row.get("props") or row.get("data") or {}
+                props = row.get("props") or row.get("data") or {}
                 if isinstance(props, list):
                     props = {str(p.get("key") or p.get("propName")): p.get("value") for p in props}
                 if sn and sn in devices and isinstance(props, dict):
                     statuses[sn] = LockStatus.from_props(sn, props)
+
+            # 在线状态 / wanIp 来自 statusGlobal
+            try:
+                globals_map = await self.client.get_status_global(list(devices))
+            except JFCloudError as err:
+                _LOGGER.debug("statusGlobal failed: %s", err)
+                globals_map = {}
+            for sn, info in globals_map.items():
+                base = statuses.get(sn) or LockStatus(sn=sn)
+                statuses[sn] = base.with_online(
+                    online=info.get("online"), wan_ip=info.get("wan_ip")
+                )
 
             # keep values pushed over MQTT for locks the poll did not return
             previous_statuses = self.data.statuses if self.data else {}
@@ -400,9 +412,10 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
             _LOGGER.debug("push for unknown sn %r ignored (%s)", sn, props)
             return
         previous = self.data.statuses.get(sn)
-        merged = dict(previous.raw) if previous else {}
-        merged.update(props)
-        self.data.statuses[sn] = LockStatus.from_props(sn, merged)
+        if previous is None:
+            self.data.statuses[sn] = LockStatus.from_props(sn, props)
+        else:
+            self.data.statuses[sn] = previous.with_props(props)
         self.async_set_updated_data(self.data)
 
     # ------------------------------------------------------------- commands

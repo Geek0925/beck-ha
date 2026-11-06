@@ -1,4 +1,11 @@
-"""Sensors: battery, unlock counter, last unlock, Wi-Fi signal."""
+"""Sensors — 全部来自实测可读的 REST 字段。
+
+    battery      电池电量（batteryPower）
+    signal       Wi-Fi 信号（wifiSignal）
+    wifi_name    连接的 Wi-Fi 名称（wifiName）
+    last_unlock_user / last_unlock_method / last_unlock_at
+                 最近一次开锁（getDeviceAlarmList）
+"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -37,19 +44,6 @@ SENSORS: tuple[BokeSensorDescription, ...] = (
         value_fn=lambda s: s.battery,
     ),
     BokeSensorDescription(
-        key="unlock_count",
-        translation_key="unlock_count",
-        icon="mdi:counter",
-        state_class=SensorStateClass.TOTAL_INCREASING,
-        value_fn=lambda s: s.unlock_count,
-    ),
-    BokeSensorDescription(
-        key="last_unlock",
-        translation_key="last_unlock",
-        icon="mdi:lock-clock",
-        value_fn=lambda s: s.last_unlock,
-    ),
-    BokeSensorDescription(
         key="signal",
         translation_key="signal",
         native_unit_of_measurement=SIGNAL_STRENGTH_DECIBELS_MILLIWATT,
@@ -57,6 +51,12 @@ SENSORS: tuple[BokeSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_registry_enabled_default=False,
         value_fn=lambda s: s.signal,
+    ),
+    BokeSensorDescription(
+        key="wifi_name",
+        translation_key="wifi_name",
+        icon="mdi:wifi",
+        value_fn=lambda s: s.wifi_name,
     ),
 )
 
@@ -66,7 +66,7 @@ class BokeRecordDescription(SensorEntityDescription):
     value_fn: Callable[[OpenRecord], Any] = lambda _record: None
 
 
-#: sensors backed by the unlock-record feed instead of the datapoint snapshot
+#: 由开锁记录（getDeviceAlarmList）驱动的传感器
 RECORD_SENSORS: tuple[BokeRecordDescription, ...] = (
     BokeRecordDescription(
         key="last_unlock_user",
@@ -93,17 +93,17 @@ async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
     coordinator: BokeCoordinator = hass.data[DOMAIN][entry.entry_id]
-    entities: list[BokeSensor] = []
+    entities: list[SensorEntity] = []
     for sn in coordinator.data.devices:
         entities.extend(BokeSensor(coordinator, sn, description) for description in SENSORS)
-    entities.extend(
-        BokeRecordSensor(coordinator, sn, description) for description in RECORD_SENSORS
-    )
+        entities.extend(
+            BokeRecordSensor(coordinator, sn, description) for description in RECORD_SENSORS
+        )
     async_add_entities(entities)
 
 
 class BokeSensor(CoordinatorEntity[BokeCoordinator], SensorEntity):
-    """One datapoint exposed as a sensor."""
+    """Sensor backed by the property snapshot."""
 
     _attr_has_entity_name = True
 
@@ -119,6 +119,10 @@ class BokeSensor(CoordinatorEntity[BokeCoordinator], SensorEntity):
         self._attr_device_info = {
             "identifiers": {(DOMAIN, sn)},
             "name": device.name if device else sn,
+            "manufacturer": "杰峰科技",
+            "model": (device.model if device else "") or "Wi-Fi 门锁",
+            "sw_version": device.firmware if device else None,
+            "serial_number": sn,
         }
 
     @property
@@ -126,9 +130,13 @@ class BokeSensor(CoordinatorEntity[BokeCoordinator], SensorEntity):
         status = self.coordinator.data.status(self._sn)
         return None if status is None else self._description.value_fn(status)
 
+    @property
+    def available(self) -> bool:
+        return bool(super().available and self.coordinator.data.device(self._sn))
+
 
 class BokeRecordSensor(CoordinatorEntity[BokeCoordinator], SensorEntity):
-    """Sensor backed by the newest unlock record."""
+    """Sensor backed by the newest unlock record (getDeviceAlarmList)."""
 
     _attr_has_entity_name = True
 
@@ -143,20 +151,25 @@ class BokeRecordSensor(CoordinatorEntity[BokeCoordinator], SensorEntity):
         self._attr_device_info = {
             "identifiers": {(DOMAIN, sn)},
             "name": device.name if device else sn,
+            "manufacturer": "杰峰科技",
+            "model": (device.model if device else "") or "Wi-Fi 门锁",
+            "serial_number": sn,
         }
 
     @property
     def native_value(self) -> Any:
         record = self.coordinator.data.last_record(self._sn)
-        if record is not None:
-            return self.entity_description.value_fn(record)
-        # 回退：用 notify-log 里最新一条（含历史消息）
-        note = getattr(self.coordinator, "last_notification", None) or {}
-        if not note:
+        if record is None:
             return None
-        key = self.entity_description.key
-        if key.endswith("user"):
-            return note.get("user") or note.get("nickName")
-        if key.endswith("method"):
-            return note.get("method") or note.get("logType")
-        return note.get("time") or note.get("timestamp")
+        value = self.entity_description.value_fn(record)
+        if self.entity_description.key == "last_unlock_at" and value is not None:
+            # 云端给的是本地时间字符串，转成 ISO 供 HA 展示
+            try:
+                return value.isoformat()
+            except AttributeError:
+                return None
+        return value
+
+    @property
+    def available(self) -> bool:
+        return bool(super().available and self.coordinator.data.device(self._sn))

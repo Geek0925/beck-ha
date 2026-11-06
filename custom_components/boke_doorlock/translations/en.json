@@ -67,12 +67,6 @@
       "battery": {
         "name": "Battery"
       },
-      "unlock_count": {
-        "name": "Unlock count"
-      },
-      "last_unlock": {
-        "name": "Last unlock info"
-      },
       "last_unlock_user": {
         "name": "Last unlock user"
       },
@@ -84,44 +78,14 @@
       },
       "last_unlock_at": {
         "name": "Last unlock at"
+      },
+      "wifi_name": {
+        "name": "Wi-Fi 名称"
       }
     },
     "binary_sensor": {
-      "tampered": {
-        "name": "Tamper"
-      },
-      "forced_open": {
-        "name": "Forced open"
-      },
-      "malfunction": {
-        "name": "Malfunction"
-      },
-      "door": {
-        "name": "Door"
-      },
-      "core_cover": {
-        "name": "Core cover"
-      },
-      "door_reminder": {
-        "name": "Door reminder"
-      },
-      "alert_tamper": {
-        "name": "Alert · tamper"
-      },
-      "alert_forced_open": {
-        "name": "Alert · forced open"
-      },
-      "alert_low_battery": {
-        "name": "Alert · low battery"
-      },
-      "alert_offline": {
-        "name": "Alert · device offline"
-      },
-      "alert_fault": {
-        "name": "Alert · fault"
-      },
-      "alert_door_open": {
-        "name": "Alert · door ajar"
+      "online": {
+        "name": "在线"
       }
     }
   },

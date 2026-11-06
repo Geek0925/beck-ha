@@ -12,13 +12,12 @@ official open-platform specification. Standalone usage::
 from .client import ENDPOINTS, HOSTS, JFCloudClient
 from .defaults import APP_KEY, APP_SECRET
 from .errors import JFCloudAuthError, JFCloudConnectionError, JFCloudError
-from .models import ALIASES, LockDevice, LockStatus
+from .models import LockDevice, LockStatus
 from .records import OpenRecord, normalise_method
 from .push import JFPushListener, flatten_payload
 from .signature import SignatureGenerator, VERIFIED_VECTOR, make_signature
 
 __all__ = [
-    "ALIASES",
     "APP_KEY",
     "APP_SECRET",
     "ENDPOINTS",

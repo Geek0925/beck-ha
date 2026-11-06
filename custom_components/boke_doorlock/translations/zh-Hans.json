@@ -67,12 +67,6 @@
       "battery": {
         "name": "电量"
       },
-      "unlock_count": {
-        "name": "开锁次数"
-      },
-      "last_unlock": {
-        "name": "最近开锁信息"
-      },
       "last_unlock_user": {
         "name": "最近开锁用户"
       },
@@ -84,44 +78,14 @@
       },
       "last_unlock_at": {
         "name": "最近开锁时间"
+      },
+      "wifi_name": {
+        "name": "Wi-Fi 名称"
       }
     },
     "binary_sensor": {
-      "tampered": {
-        "name": "防拆报警"
-      },
-      "forced_open": {
-        "name": "强制开门"
-      },
-      "malfunction": {
-        "name": "故障"
-      },
-      "door": {
-        "name": "门状态"
-      },
-      "core_cover": {
-        "name": "锁芯盖"
-      },
-      "door_reminder": {
-        "name": "门未关提醒"
-      },
-      "alert_tamper": {
-        "name": "告警·防撬"
-      },
-      "alert_forced_open": {
-        "name": "告警·强制开门"
-      },
-      "alert_low_battery": {
-        "name": "告警·低电量"
-      },
-      "alert_offline": {
-        "name": "告警·设备离线"
-      },
-      "alert_fault": {
-        "name": "告警·故障"
-      },
-      "alert_door_open": {
-        "name": "告警·门未关"
+      "online": {
+        "name": "在线"
       }
     }
   },
