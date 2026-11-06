@@ -81,6 +81,9 @@
       },
       "last_unlock_at": {
         "name": "最近开锁时间"
+      },
+      "room": {
+        "name": "房间"
       }
     },
     "binary_sensor": {

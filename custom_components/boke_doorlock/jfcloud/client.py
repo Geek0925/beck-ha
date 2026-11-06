@@ -788,6 +788,26 @@ class JFCloudClient:
         except Exception as err:  # noqa: BLE001
             raise JFCloudConnectionError(str(err)) from err
 
+    async def get_rooms(self, user_group_id: str) -> dict[str, str]:
+        """``v3/room/getRoomListByPage`` — 房间 id → 名称（实测可读）。"""
+        if not user_group_id:
+            return {}
+        try:
+            payload = await self.raw_request(
+                "v3/room/getRoomListByPage",
+                body={"userGroupId": user_group_id, "page": 1, "limit": 50},
+            )
+        except JFCloudError as err:
+            _LOGGER.debug("room list failed: %s", err)
+            return {}
+        data = payload.get("data") or {}
+        rows = data.get("data") if isinstance(data, Mapping) else []
+        out: dict[str, str] = {}
+        for row in rows or []:
+            if isinstance(row, Mapping) and row.get("id"):
+                out[str(row["id"])] = str(row.get("roomName") or "")
+        return out
+
     async def get_lock_users(self, sn: str) -> list[dict[str, Any]]:
         """门锁成员/开锁用户列表（实测可用：body 只需 sn）。"""
         payload = await self.raw_request(

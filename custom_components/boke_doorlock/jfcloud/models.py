@@ -53,6 +53,7 @@ class LockDevice:
     firmware: str = ""
     online: bool = False
     mac: str = ""
+    room_name: str = ""
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -83,6 +84,7 @@ class LockStatus:
     wifi_name: str | None = None
     online: bool | None = None
     wan_ip: str | None = None
+    room_name: str | None = None
     raw: Mapping[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -106,6 +108,14 @@ class LockStatus:
             online=online if online is not None else self.online,
             wan_ip=wan_ip or self.wan_ip,
             raw=self.raw,
+        )
+
+    def with_room(self, room_name: str | None) -> "LockStatus":
+        """合并设备所在房间名（来自 getRoomListByPage）。"""
+        return LockStatus(
+            sn=self.sn, battery=self.battery, signal=self.signal,
+            wifi_name=self.wifi_name, online=self.online, wan_ip=self.wan_ip,
+            room_name=room_name or self.room_name, raw=self.raw,
         )
 
     def with_props(self, props: Mapping[str, Any]) -> "LockStatus":

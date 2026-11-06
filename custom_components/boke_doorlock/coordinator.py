@@ -138,6 +138,19 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
                     continue
                 devices[device.sn] = device
 
+            # 房间名（device.roomId → 名称）
+            group_id = ""
+            for dev in unfiltered.values():
+                group_id = str(dev.raw.get("userGroupId") or "")
+                if group_id:
+                    break
+            if group_id:
+                rooms = await self.client.get_rooms(group_id)
+                for dev in unfiltered.values():
+                    room_id = str(dev.raw.get("roomId") or "")
+                    if room_id and room_id in rooms:
+                        dev.room_name = rooms[room_id]
+
             if not devices and unfiltered:
                 # 配置里的 SN 与云端不一致时，宁可不过滤也不让集成废掉
                 _LOGGER.warning(
@@ -202,6 +215,10 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
                 statuses[sn] = base.with_online(
                     online=info.get("online"), wan_ip=info.get("wan_ip")
                 )
+
+            for sn, dev in devices.items():
+                if dev.room_name and sn in statuses:
+                    statuses[sn] = statuses[sn].with_room(dev.room_name)
 
             # keep values pushed over MQTT for locks the poll did not return
             previous_statuses = self.data.statuses if self.data else {}

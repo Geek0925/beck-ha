@@ -81,6 +81,9 @@
       },
       "wifi_name": {
         "name": "Wi-Fi 名称"
+      },
+      "room": {
+        "name": "房间"
       }
     },
     "binary_sensor": {
