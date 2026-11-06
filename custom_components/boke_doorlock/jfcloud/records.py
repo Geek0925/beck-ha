@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
-__all__ = ["OpenRecord", "METHOD_HINTS", "normalise_method", "dedupe"]
+__all__ = ["OpenRecord", "METHOD_HINTS", "format_local", "normalise_method", "dedupe"]
 
 #: String forms of unlock methods seen in the app's localisation tables.
 #: The wire format is usually numeric; these are used when the cloud already
@@ -123,6 +123,15 @@ def _as_local_datetime(value: Any, tz_name: str | None = None) -> datetime | Non
                 continue
             return parsed.replace(tzinfo=_device_tz(tz_name)).astimezone(timezone.utc)
     return _as_datetime(value)
+
+
+def format_local(value: datetime | None, tz_name: str = "Asia/Shanghai") -> str | None:
+    """把 UTC 时间格式化成设备本地时间 ``yyyy-MM-dd HH:mm:ss``。"""
+    if value is None:
+        return None
+    if value.tzinfo is None:
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(_device_tz(tz_name)).strftime("%Y-%m-%d %H:%M:%S")
 
 
 @dataclass(slots=True)

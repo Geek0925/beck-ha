@@ -164,8 +164,10 @@ async def async_publish_snapshot(hass: Any, sn: str, status: Any, record: Any) -
         if record.method:
             await async_publish(hass, f"{TOPIC_ROOT}/{sn}/last_method", str(record.method))
         if record.timestamp is not None:
+            from .records import format_local
+
             await async_publish(
                 hass,
                 f"{TOPIC_ROOT}/{sn}/last_time",
-                record.timestamp.isoformat(),
+                format_local(record.timestamp) or "",
             )

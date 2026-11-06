@@ -163,11 +163,10 @@ class BokeRecordSensor(CoordinatorEntity[BokeCoordinator], SensorEntity):
             return None
         value = self.entity_description.value_fn(record)
         if self.entity_description.key == "last_unlock_at" and value is not None:
-            # 云端给的是本地时间字符串，转成 ISO 供 HA 展示
-            try:
-                return value.isoformat()
-            except AttributeError:
-                return None
+            # 统一显示为 yyyy-MM-dd HH:mm:ss（北京时间）
+            from .jfcloud.records import format_local
+
+            return format_local(value)
         return value
 
     @property
