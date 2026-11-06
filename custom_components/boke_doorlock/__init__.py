@@ -154,43 +154,66 @@ async def _publish_ha_state(hass, coordinator) -> None:
 
 
 async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
-    """启动 WSS MQTT 实时通道；任何异常都不影响集成加载。"""
+    """连接杰峰官方 MQTT，把消息桥接到 HA 内置 MQTT。
+
+    小程序参数（实测可连，WSS 必需）：
+        wss://jfmq-v2.jftechws.com:11883/mqtt
+        username = JWT account, password = accessToken
+    消息处理：解析后更新实体，同时转发到 HA 内置 MQTT（mqtt.publish）。
+    """
     try:
+        from .jfcloud.ha_mqtt import async_publish, ha_mqtt_available
         from .jfcloud.message_map import classify
         from .jfcloud.mqtt import JFMQTTClient
-        from .const import EVENT_NOTIFICATION
 
         token = getattr(coordinator.client, "token", None)
-        devices = getattr(coordinator, "devices", {}) or {}
-        sns = list(devices.keys()) if hasattr(devices, "keys") else []
-        if not token or not sns:
+        if not token:
+            _LOGGER.debug("没有 token，跳过杰峰 MQTT")
+            return
+        devices = (coordinator.data.devices if coordinator.data else {}) or {}
+        sns = list(devices.keys())
+        if not sns:
+            _LOGGER.debug("没有设备，跳过杰峰 MQTT")
             return
 
-        def _handle(event) -> None:
-            try:
-                if event.get("kind") == "alarm":
-                    hass.bus.async_fire(EVENT_NOTIFICATION, {
-                        "sn": event.get("sn"), "reason": event.get("reason"),
-                        "user": event.get("user"), "time": event.get("time"),
-                        "source": "mqtt",
-                    })
-                else:
-                    coordinator.async_set_updated_data(
-                        {"props": event.get("props", {}), "sn": event.get("sn")}
-                    )
-            except Exception:  # noqa: BLE001
-                pass
-
         def _on_event(topic: str, payload: bytes) -> None:
+            hass.loop.call_soon_threadsafe(_handle_mqtt, topic, payload)
+
+        def _handle_mqtt(topic: str, payload: bytes) -> None:
+            hass.async_create_task(_process_mqtt(topic, payload))
+
+        async def _process_mqtt(topic: str, payload: bytes) -> None:
+            # 原样转发到 HA 内置 MQTT，便于用户自行订阅排查
+            if ha_mqtt_available(hass):
+                await async_publish(hass, f"boke_doorlock/raw{topic}", payload.decode("utf-8", "replace"))
             event = classify(topic, payload)
-            if event:
-                hass.loop.call_soon_threadsafe(_handle, event)
+            if not event:
+                return
+            sn = event.get("sn")
+            if event.get("kind") == "props" and sn:
+                coordinator.async_apply_push(sn, event.get("props") or {})
+            elif event.get("kind") == "alarm":
+                from .const import EVENT_UNLOCK
+
+                hass.bus.async_fire(
+                    EVENT_UNLOCK,
+                    {
+                        "sn": sn,
+                        "method": event.get("method"),
+                        "user": event.get("user"),
+                        "timestamp": event.get("time"),
+                        "source": "mqtt",
+                    },
+                )
 
         listener = JFMQTTClient(token, sns, _on_event)
         if await listener.async_start():
+            _LOGGER.info("杰峰 MQTT 已连接并桥接到 HA: %s", listener.topics)
             entry.async_on_unload(lambda: hass.async_create_task(listener.async_stop()))
+        else:
+            _LOGGER.debug("杰峰 MQTT 未连接（不影响其他功能）")
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("MQTT 实时通道启动失败，忽略", exc_info=True)
+        _LOGGER.debug("杰峰 MQTT 启动失败", exc_info=True)
 
 
 async def _start_push(
