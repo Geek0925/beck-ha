@@ -7,6 +7,7 @@ The cloud returns them under ``/v3/deviceOpnLog/getRecordReport``.
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
@@ -17,6 +18,18 @@ __all__ = ["OpenRecord", "METHOD_HINTS", "normalise_method", "dedupe"]
 #: The wire format is usually numeric; these are used when the cloud already
 #: sends a label, and to normalise mixed-case variants.
 METHOD_HINTS: dict[str, str] = {
+    "fingerprint": "fingerprint",
+    "face": "face",
+    "passwd": "password",
+    "passwdmanger": "password",
+    "password": "password",
+    "card": "card",
+    "key": "key",
+    "remote": "remote",
+    "temp": "temporary",
+    "fingermanger": "fingerprint",
+    "facemanger": "face",
+    "cardmanger": "card",
     "passwordunlock": "password",
     "passwordtryunlock": "password_failed",
     "adminpasswordunlock": "password_admin",
@@ -84,6 +97,19 @@ def _as_datetime(value: Any) -> datetime | None:
     return None
 
 
+def _as_local_datetime(value: Any) -> datetime | None:
+    """云端返回 "YYYY-MM-DD HH:MM:SS"（本地时间，无时区），按本地时区解析后转 UTC。"""
+    if isinstance(value, str):
+        text = value.strip()
+        for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
+            try:
+                parsed = datetime.strptime(text, fmt)
+            except ValueError:
+                continue
+            return parsed.astimezone(timezone.utc)
+    return _as_datetime(value)
+
+
 @dataclass(slots=True)
 class OpenRecord:
     """One unlock event as reported by the cloud."""
@@ -118,6 +144,51 @@ class OpenRecord:
     @property
     def is_success(self) -> bool:
         return "failed" not in self.method
+
+    @classmethod
+    def from_alarm(cls, item: Mapping[str, Any], *, sn: str = "") -> "OpenRecord":
+        """解析 ``getDeviceAlarmList`` 返回的 AlarmArray 条目。
+
+        结构（实测）::
+
+            {"AlarmId": "261105233855373", "AlarmTime": "2026-11-06 07:38:54",
+             "AlarmEvent": "DoorLockOpen",
+             "AlarmMsg": "{\"MsgType\":\"FingerPrint\",\"NickName\":\"甜甜妈妈\",
+                          \"UserId\":\"018\",\"UserType\":\"FingerManger\"}"}
+        """
+        message: Mapping[str, Any] = {}
+        raw_msg = item.get("AlarmMsg")
+        if isinstance(raw_msg, str) and raw_msg.strip().startswith("{"):
+            try:
+                parsed = json.loads(raw_msg)
+                if isinstance(parsed, dict):
+                    message = parsed
+            except ValueError:
+                message = {}
+        event = str(item.get("AlarmEvent") or "")
+        msg_type = message.get("MsgType") or message.get("msgType") or ""
+        method = normalise_method(msg_type or event)
+        identifier = item.get("AlarmId") or item.get("id")
+        timestamp = _as_local_datetime(item.get("AlarmTime") or item.get("alarmTime"))
+        if identifier in (None, ""):
+            seed = f"{sn}|{event}|{timestamp}|{message.get('NickName')}"
+            identifier = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]
+        return cls(
+            record_id=str(identifier),
+            sn=str(item.get("SerialNumber") or sn),
+            timestamp=timestamp,
+            method=method,
+            user_name=message.get("NickName") or message.get("UserName"),
+            user_type=message.get("UserType"),
+            image_url=item.get("PicUrl") or item.get("picUrl"),
+            raw={**dict(item), "event": event, "message": message},
+        )
+
+    @property
+    def is_unlock(self) -> bool:
+        """Whether this alarm record represents a door-open event."""
+        event = str(self.raw.get("event") or "").lower()
+        return "doorlockopen" in event or "unlock" in event or self.method not in ("unknown", "")
 
 
 def dedupe(records: Iterable[OpenRecord]) -> list[OpenRecord]:

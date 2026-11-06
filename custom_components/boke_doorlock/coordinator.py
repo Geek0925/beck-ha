@@ -215,17 +215,17 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
             return
         self._last_record_fetch = now
 
-        window_ms = 24 * 60 * 60 * 1000
+        window_ms = 7 * 24 * 60 * 60 * 1000
         end_ms = int(time.time() * 1000)
         for sn in devices:
             try:
-                rows = await self.client.get_open_records(sn, end_ms - window_ms, end_ms)
+                rows = await self.client.get_open_records(sn, end_ms - window_ms, end_ms, size=30)
             except JFCloudError as err:
                 _LOGGER.debug("record fetch for %s failed: %s", sn, err)
                 continue
 
             previous = {record.record_id for record in self._records.get(sn, [])}
-            parsed = dedupe(OpenRecord.from_api(row, sn=sn) for row in rows)
+            parsed = dedupe(OpenRecord.from_alarm(row, sn=sn) for row in rows)
             self._records[sn] = parsed[:200]
 
             for record in parsed:

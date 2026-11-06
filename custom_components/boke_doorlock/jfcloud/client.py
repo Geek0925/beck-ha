@@ -44,8 +44,10 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import datetime
 import hashlib
+import json
 import uuid as uuid_module
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlencode
@@ -234,6 +236,7 @@ class JFCloudClient:
         self.password_encoding = password_encoding
         self.login_hosts = tuple(login_hosts) if login_hosts else LOGIN_HOSTS
         self.token: str | None = None
+        self._account_id: str | None = None
         self.login_host: str | None = None
         # 报文加解密用的 secret（小程序里是登录后下发的 publicKey；先用 appSecret）
         self.encrypt_secret = app_secret
@@ -259,6 +262,26 @@ class JFCloudClient:
         if self._own_session and self._session is not None:
             await self._session.close()
             self._session = None
+
+    @property
+    def account_id(self) -> str | None:
+        """JWT 里的 account（api-cn 网关要求放到 userid 头）。"""
+        if self._account_id:
+            return self._account_id
+        token = self.token or ""
+        parts = token.split(".")
+        if len(parts) < 2:
+            return None
+        try:
+            raw = parts[1] + "=" * (-len(parts[1]) % 4)
+            claims = json.loads(base64.urlsafe_b64decode(raw))
+        except Exception:  # noqa: BLE001
+            return None
+        account = claims.get("account")
+        if isinstance(account, str) and account:
+            self._account_id = account
+            return account
+        return None
 
     def _sign_pair(self) -> tuple[str, str]:
         return self._signer.next()
@@ -544,21 +567,106 @@ class JFCloudClient:
         return [r for r in rows if isinstance(r, Mapping)]
 
     async def get_device_token(self, sns: Iterable[str]) -> dict[str, str]:
-        # 实测：逐台调用，body 需要 {deviceNo, isLatest}
+        """/tks/v2/device/token/{tms}/{sig}.rs — 明文 body {"sns": [...]}。
+
+        实测：必须带 appkey/userid/timemillis/signature 头，否则 5003
+        CERTIFICATE_FAILURE。返回的 token 用于 getDeviceAlarmList 的 URL。
+        """
+        want = [s for s in sns if s]
+        if not want:
+            return {}
+        time_millis, signature = self._sign_pair()
+        url = (
+            f"https://{OPEN_API_HOST}/tks/v2/device/token/{time_millis}/{signature}.rs"
+        )
+        headers = self._api_headers(time_millis, signature)
+        text = await _urllib_request(
+            url,
+            method="POST",
+            payload=json.dumps({"sns": want}).encode("utf-8"),
+            headers=headers,
+            timeout=self.timeout,
+        )
+        payload = _parse_payload(text, "")
+        data = payload.get("data")
         out: dict[str, str] = {}
-        for sn in sns:
-            try:
-                payload = await self.raw_request(
-                    ENDPOINTS["device_token"][1], body={"deviceNo": sn, "isLatest": 1}
-                )
-            except Exception:  # noqa: BLE001
-                continue
-            data = payload.get("data") or {}
-            if isinstance(data, Mapping):
-                token = data.get("token") or data.get("adminToken")
-                if token:
-                    out[sn] = token
+        if isinstance(data, list):
+            for row in data:
+                if isinstance(row, Mapping):
+                    sn_value = row.get("sn")
+                    token = row.get("token")
+                    if sn_value and token:
+                        out[str(sn_value)] = str(token)
+        elif isinstance(data, Mapping):
+            token = data.get("token")
+            if token:
+                out[want[0]] = str(token)
         return out
+
+    async def get_alarm_records(
+        self,
+        sn: str,
+        start_time: str,
+        end_time: str,
+        *,
+        page: int = 1,
+        size: int = 20,
+    ) -> list[dict[str, Any]]:
+        """``gwp-viot/v3/rtc/device/getDeviceAlarmList/{deviceToken}`` — 开锁/告警记录。
+
+        这是 App 和小程序"开锁记录"页的真实数据源：明文 JSON，URL 里带
+        /tks/v2/device/token 拿到的设备 token。返回 AlarmArray。
+        """
+        tokens = await self.get_device_token([sn])
+        device_token = tokens.get(sn)
+        if not device_token:
+            return []
+        time_millis, signature = self._sign_pair()
+        url = (
+            f"https://{OPEN_API_HOST}/gwp-viot/v3/rtc/device/getDeviceAlarmList/"
+            f"{device_token}"
+        )
+        body = {
+            "AlarmEvent": "",
+            "sn": sn,
+            "startTime": start_time,
+            "endTime": end_time,
+            "pageSize": size,
+            "pageNum": page,
+            "protocolFmt": "0",
+            "unQueryEnable": True,
+            "label": ["Sentinel"],
+            "FilterType": "and",
+        }
+        text = await _urllib_request(
+            url,
+            method="POST",
+            payload=json.dumps(body).encode("utf-8"),
+            headers=self._api_headers(time_millis, signature),
+            timeout=self.timeout,
+        )
+        payload = _parse_payload(text, "")
+        data = payload.get("data")
+        rows = (data or {}).get("AlarmArray") if isinstance(data, Mapping) else None
+        return [r for r in (rows or []) if isinstance(r, Mapping)]
+
+    def _api_headers(self, time_millis: str, signature: str) -> dict[str, str]:
+        """api-cn 网关（gwp-viot / tks）要求的全套请求头。"""
+        headers = {
+            "content-type": "application/json; charset=UTF-8",
+            "accept": "*/*",
+            "accept-language": "zh_CN",
+            "xweb_xhr": "1",
+            "uuid": self.uuid,
+            "appkey": self.app_key,
+            "timemillis": time_millis,
+            "signature": signature,
+        }
+        if self.account_id:
+            headers["userid"] = self.account_id
+        if self.token:
+            headers["Authorization"] = self.token
+        return headers
 
     async def get_prop_status(self, sns: Iterable[str]) -> list[dict[str, Any]]:
         payload = await self.raw_request(
@@ -607,27 +715,18 @@ class JFCloudClient:
         page: int = 1,
         size: int = 50,
     ) -> list[dict[str, Any]]:
-        # 实测：时间必须是 yyyy-MM-dd 字符串，且必须带 propCode / timeType
-        def _day(ms: int) -> str:
-            return datetime.datetime.fromtimestamp(ms / 1000).strftime("%Y-%m-%d")
+        """开锁记录：走 getDeviceAlarmList（App/小程序"记录"页的真实数据源）。"""
+        def _stamp(ms: int) -> str:
+            return datetime.datetime.fromtimestamp(ms / 1000).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
 
-        payload = await self.raw_request(
-            ENDPOINTS["record_report"][1],
-            body={
-                "deviceNo": sn,
-                "propCode": "doorLockOpen",
-                "timeType": "day",
-                "startTime": _day(start_ms),
-                "endTime": _day(end_ms),
-                "page": page,
-                "limit": size,
-            },
-        )
-        data = payload.get("data")
-        if isinstance(data, Mapping):
-            rows = data.get("data") or data.get("list") or []
-            return [r for r in rows if isinstance(r, Mapping)]
-        return _as_list(payload)
+        try:
+            return await self.get_alarm_records(
+                sn, _stamp(start_ms), _stamp(end_ms), page=page, size=size
+            )
+        except Exception as err:  # noqa: BLE001
+            raise JFCloudConnectionError(str(err)) from err
 
     async def get_lock_users(self, sn: str) -> list[dict[str, Any]]:
         """门锁成员/开锁用户列表（实测可用：body 只需 sn）。"""
