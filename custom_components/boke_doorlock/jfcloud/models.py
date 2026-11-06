@@ -16,7 +16,7 @@ __all__ = ["LockDevice", "LockStatus", "ALIASES"]
 #: canonical name -> known spellings seen in the app
 ALIASES: dict[str, tuple[str, ...]] = {
     "locked": ("LockState", "LockStatus", "lockState", "LockedInside"),
-    "battery": ("Battery", "BatteryPercent", "ElectricQuantity", "Power"),
+    "battery": ("BatteryPower", "Battery", "BatteryPercent", "ElectricQuantity", "Power"),
     "charging": ("ChargeState", "Charging", "ChargeStatus"),
     "tampered": ("LockTampered", "Tamper", "AlarmTamper"),
     "forced_open": ("LockForciblyOpened", "ForciblyOpened", "AlarmForceOpen"),

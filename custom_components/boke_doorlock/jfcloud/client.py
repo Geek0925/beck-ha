@@ -48,6 +48,7 @@ import base64
 import datetime
 import hashlib
 import json
+import logging
 import uuid as uuid_module
 from typing import Any, Iterable, Mapping
 from urllib.parse import urlencode
@@ -59,6 +60,8 @@ except ImportError:  # pragma: no cover
 
 from .crypto import decrypt_body, derive_key, encrypt_body, is_ciphertext
 from .defaults import APP_KEY as _APP_KEY, APP_SECRET as _APP_SECRET, APP_UUID as _APP_UUID, MOVE_CARD as _MOVE_CARD
+_LOGGER = logging.getLogger(__name__)
+
 from .errors import JFCloudAuthError, JFCloudConnectionError, JFCloudError
 from .signature import SignatureGenerator
 
@@ -668,11 +671,31 @@ class JFCloudClient:
             headers["Authorization"] = self.token
         return headers
 
+    #: 实测云端认的属性名（抓包解密得到）：电量是 batteryPower
+    STATUS_PROPS: tuple[str, ...] = (
+        "batteryPower",
+        "wifiSignal",
+        "wifiName",
+        "lockState",
+        "doorState",
+    )
+
     async def get_prop_status(self, sns: Iterable[str]) -> list[dict[str, Any]]:
-        payload = await self.raw_request(
-            ENDPOINTS["prop_status"][1], body={"sns": list(sns)}
-        )
-        return _as_list(payload)
+        """逐台查询属性：body 是 ``{sn, props: [...]}``，返回扁平 props 字典。"""
+        rows: list[dict[str, Any]] = []
+        for sn in sns:
+            try:
+                payload = await self.raw_request(
+                    ENDPOINTS["prop_status"][1],
+                    body={"sn": sn, "props": list(self.STATUS_PROPS)},
+                )
+            except JFCloudError as err:
+                _LOGGER.debug("prop status for %s failed: %s", sn, err)
+                continue
+            data = payload.get("data")
+            if isinstance(data, Mapping):
+                rows.append({"sn": sn, "props": dict(data)})
+        return rows
 
     async def send_command(
         self,
