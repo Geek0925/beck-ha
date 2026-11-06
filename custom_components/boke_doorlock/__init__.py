@@ -123,57 +123,66 @@ async def _cleanup_ha_discovery(hass, coordinator) -> None:
 
 
 async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
-    """连接杰峰官方 MQTT，把消息桥接到 HA 内置 MQTT。
+    """按小程序完整链路接入实时消息。
 
-    小程序参数（实测可连，WSS 必需）：
-        wss://jfmq-v2.jftechws.com:11883/mqtt
-        username = JWT account, password = accessToken
-    消息处理：解析后更新实体，同时转发到 HA 内置 MQTT（mqtt.publish）。
+    小程序流程（抓包实证）：
+        1. POST /wx/device/message/cfgRegister   {}                -> MQTT 节点
+        2. POST /wx/device/message/batchSubscribe {subscribeList}  -> 注册设备推送
+        3. 连 wss://jfmq-v2.jftechws.com:11883/mqtt
+        4. 订阅 /device/{sn}、/device/{sn}/alarmEvent、/device/{sn}/status、/user/{uid}
     """
     try:
+        from .const import EVENT_UNLOCK
         from .jfcloud.ha_mqtt import async_publish, ha_mqtt_available
         from .jfcloud.message_map import classify
         from .jfcloud.mqtt import JFMQTTClient
 
         token = getattr(coordinator.client, "token", None)
         if not token:
-            _LOGGER.debug("没有 token，跳过杰峰 MQTT")
+            _LOGGER.debug("没有 token，跳过官方 MQTT")
             return
         devices = (coordinator.data.devices if coordinator.data else {}) or {}
         sns = list(devices.keys())
         if not sns:
-            _LOGGER.debug("没有设备，跳过杰峰 MQTT")
+            _LOGGER.debug("没有设备，跳过官方 MQTT")
             return
 
+        try:
+            node = await coordinator.client.register_message_push(sns)
+            if node:
+                _LOGGER.info("已注册设备消息推送，节点 %s", node)
+        except Exception:  # noqa: BLE001
+            _LOGGER.debug("消息推送注册失败", exc_info=True)
+
         def _on_event(topic: str, payload: bytes) -> None:
-            hass.loop.call_soon_threadsafe(_handle_mqtt, topic, payload)
+            hass.loop.call_soon_threadsafe(_dispatch, topic, payload)
 
-        def _handle_mqtt(topic: str, payload: bytes) -> None:
-            hass.async_create_task(_process_mqtt(topic, payload))
+        def _dispatch(topic: str, payload: bytes) -> None:
+            hass.async_create_task(_process(topic, payload))
 
-        async def _process_mqtt(topic: str, payload: bytes) -> None:
-            # 原样转发到 HA 内置 MQTT，便于用户自行订阅排查
+        async def _process(topic: str, payload: bytes) -> None:
+            _LOGGER.debug("官方 MQTT 消息 %s: %s", topic, payload[:300])
             if ha_mqtt_available(hass):
-                await async_publish(hass, f"boke_doorlock/raw{topic}", payload.decode("utf-8", "replace"))
+                await async_publish(
+                    hass,
+                    f"boke_doorlock/raw{topic}",
+                    payload.decode("utf-8", "replace"),
+                )
             event = classify(topic, payload)
             if not event:
                 return
             sn = event.get("sn")
             if event.get("kind") == "props" and sn:
                 coordinator.async_apply_push(sn, event.get("props") or {})
+                props = event.get("props") or {}
                 if ha_mqtt_available(hass):
-                    props = event.get("props") or {}
                     if props.get("battery") is not None:
                         await async_publish(hass, f"boke_doorlock/{sn}/battery", str(props["battery"]))
                     if props.get("wifi_name"):
                         await async_publish(hass, f"boke_doorlock/{sn}/wifi", str(props["wifi_name"]))
                     if props.get("signal") is not None:
                         await async_publish(hass, f"boke_doorlock/{sn}/signal", str(props["signal"]))
-                    if props.get("lock_state") is not None:
-                        await async_publish(hass, f"boke_doorlock/{sn}/online", "ON")
             elif event.get("kind") == "alarm":
-                from .const import EVENT_UNLOCK
-
                 hass.bus.async_fire(
                     EVENT_UNLOCK,
                     {
@@ -187,24 +196,22 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
 
         listener = JFMQTTClient(token, sns, _on_event)
         if await listener.async_start():
-            _LOGGER.info("杰峰 MQTT 已连接并桥接到 HA: %s", listener.topics)
+            _LOGGER.info("官方 MQTT 已连接: %s", listener.topics)
+
             async def _stop_listener() -> None:
                 await listener.async_stop()
 
             entry.async_on_unload(_stop_listener)
         else:
-            _LOGGER.debug("杰峰 MQTT 未连接（不影响其他功能）")
+            _LOGGER.debug("官方 MQTT 未连接（不影响其他功能）")
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("杰峰 MQTT 启动失败", exc_info=True)
+        _LOGGER.debug("官方 MQTT 启动失败", exc_info=True)
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS_LIST)
     if unloaded:
         coordinator: BokeCoordinator = hass.data[DOMAIN].pop(entry.entry_id)
-        if coordinator.push_listener is not None:
-            coordinator.push_listener.stop()
-            coordinator.push_listener = None
         await coordinator.client.close()
     return unloaded
 

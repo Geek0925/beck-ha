@@ -203,6 +203,27 @@ async def _urllib_request(
     return await _asyncio.get_running_loop().run_in_executor(None, _call)
 
 
+def _urllib_request_sync(
+    url: str, payload: bytes, headers: dict[str, str], timeout: float
+) -> dict[str, Any]:
+    """同步 POST（在 executor 里跑，避免阻塞事件循环）。"""
+    import ssl as _ssl
+    import urllib.error as _urlerr
+    import urllib.request as _urlreq
+
+    req = _urlreq.Request(url, data=payload, headers=headers, method="POST")
+    ctx = _ssl.create_default_context()
+    try:
+        with _urlreq.urlopen(req, timeout=timeout, context=ctx) as resp:
+            text = resp.read().decode("utf-8", "replace")
+    except _urlerr.HTTPError as err:
+        text = err.read().decode("utf-8", "replace")
+    try:
+        return json.loads(text)
+    except ValueError:
+        return {"code": -1, "msg": text[:200]}
+
+
 class JFCloudClient:
     """Signed REST client with account login or open-platform credentials."""
 
@@ -605,6 +626,48 @@ class JFCloudClient:
             if token:
                 out[want[0]] = str(token)
         return out
+
+    async def register_message_push(self, sns: Iterable[str]) -> str | None:
+        """注册设备消息订阅（小程序 cfgRegister + batchSubscribe，明文接口）。
+
+        实测：不注册的话 MQTT 订阅成功但收不到任何推送。返回 MQTT 节点地址。
+        """
+        want = [s for s in sns if s]
+        if not want or not self.token:
+            return None
+
+        def _plain(path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+            time_millis, signature = self._sign_pair()
+            url = f"https://{self.host}/wx/device/message/{path}"
+            headers = {
+                "uuid": self.uuid,
+                "appKey": self.app_key,
+                "Content-type": "application/json; charset=UTF-8",
+                "Accept-Language": "zh_CN",
+                "timeMillis": time_millis,
+                "signature": signature,
+                "Authorization": self.token or "",
+            }
+            return _urllib_request_sync(url, json.dumps(body).encode(), headers, self.timeout)
+
+        node: str | None = None
+        try:
+            reg = _plain("cfgRegister", {})
+            if reg.get("code") == 2000 and isinstance(reg.get("data"), str):
+                node = reg["data"]
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("cfgRegister failed: %s", err)
+
+        try:
+            tokens = await self.get_device_token(want)
+            subscribe_list = [
+                {"sn": sn, "token": tok} for sn, tok in tokens.items() if tok
+            ]
+            if subscribe_list:
+                _plain("batchSubscribe", {"subscribeList": subscribe_list})
+        except Exception as err:  # noqa: BLE001
+            _LOGGER.debug("batchSubscribe failed: %s", err)
+        return node
 
     async def get_status_global(self, sns: Iterable[str]) -> dict[str, dict[str, Any]]:
         """``gwp-viot/v3/rtc/device/statusGlobal`` — 在线状态（实测可用）。
