@@ -16,14 +16,6 @@ from .const import (
     CONF_AREA_CODE,
     CONF_HOST,
     CONF_MOVE_CARD,
-    CONF_MQTT_ENABLED,
-    CONF_MQTT_HOST,
-    CONF_MQTT_LOG_PAYLOADS,
-    CONF_MQTT_PASSWORD,
-    CONF_MQTT_PORT,
-    CONF_MQTT_TLS,
-    CONF_MQTT_TOPICS,
-    CONF_MQTT_USERNAME,
     CONF_PASSWORD,
     CONF_PASSWORD_ENCODING,
     CONF_RECORD_INTERVAL,
@@ -47,7 +39,6 @@ from .const import (
 )
 from .coordinator import BokeCoordinator
 from .jfcloud import JFCloudAuthError, JFCloudClient, JFCloudError
-from .jfcloud.push import JFPushListener
 from .services import async_setup_services
 
 _LOGGER = logging.getLogger(__name__)
@@ -102,7 +93,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_LIST)
     await async_setup_services(hass)
-    await _start_push(hass, coordinator, data)
     await _start_mqtt_safe(hass, entry, coordinator, data)
     await _publish_ha_discovery(hass, coordinator)
 
@@ -199,64 +189,6 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
             _LOGGER.debug("杰峰 MQTT 未连接（不影响其他功能）")
     except Exception:  # noqa: BLE001
         _LOGGER.debug("杰峰 MQTT 启动失败", exc_info=True)
-
-
-async def _start_push(
-    hass: HomeAssistant, coordinator: BokeCoordinator, data: dict
-) -> None:
-    """Start the optional MQTT push listener.
-
-    Topic and payload envelope live inside the vendor's hardened layer, so this
-    is a configurable subscriber that doubles as a discovery harness. When no
-    credentials are given it asks the cloud for device tokens and uses the
-    uuid / token pair, which is how the native SDK authenticates.
-    """
-    if not data.get(CONF_MQTT_ENABLED):
-        return
-
-    topics = [
-        topic.strip()
-        for topic in str(data.get(CONF_MQTT_TOPICS) or DEFAULT_MQTT_TOPICS).split(",")
-        if topic.strip()
-    ]
-    username = data.get(CONF_MQTT_USERNAME) or coordinator.client.uuid
-    password = data.get(CONF_MQTT_PASSWORD) or ""
-    source = "config"
-    if not password:
-        try:
-            tokens = await coordinator.client.get_device_token(
-                list(coordinator.data.devices)
-            )
-            password = next(iter(tokens.values()), "")
-            source = "device token"
-        except JFCloudError as err:
-            _LOGGER.debug("could not fetch a device token for MQTT: %s", err)
-
-    listener = JFPushListener(
-        hass.loop,
-        coordinator.async_apply_push,
-        host=data.get(CONF_MQTT_HOST) or DEFAULT_MQTT_HOST,
-        port=int(data.get(CONF_MQTT_PORT) or DEFAULT_MQTT_PORT),
-        tls=bool(data.get(CONF_MQTT_TLS, True)),
-        username=username or None,
-        password=password or None,
-        topics=topics or ["#"],
-        log_payloads=bool(data.get(CONF_MQTT_LOG_PAYLOADS, True)),
-    )
-    try:
-        listener.start()
-    except Exception:  # pragma: no cover - broker/TLS dependent
-        _LOGGER.exception("could not start the MQTT push listener; falling back to polling")
-        return
-    coordinator.push_listener = listener
-    _LOGGER.info(
-        "MQTT push enabled: %s:%s as %s (%s credentials), topics=%s",
-        listener.host,
-        listener.port,
-        listener.client_id,
-        source,
-        topics,
-    )
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

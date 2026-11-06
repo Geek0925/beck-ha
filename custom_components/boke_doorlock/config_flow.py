@@ -200,7 +200,7 @@ class BokeOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=current.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(int, vol.Range(min=10, max=600)),
+                ): vol.All(int, vol.Range(min=0, max=600)),
                 vol.Optional(
                     CONF_RECORD_INTERVAL,
                     default=current.get(CONF_RECORD_INTERVAL, DEFAULT_RECORD_INTERVAL),
@@ -210,9 +210,6 @@ class BokeOptionsFlow(OptionsFlow):
                     default=int(current.get(CONF_ALERT_RESET, DEFAULT_ALERT_RESET)),
                 ): vol.All(int, vol.Range(min=0, max=86400)),
                 vol.Optional(CONF_SNS, default=current.get(CONF_SNS, "")): str,
-                vol.Optional(
-                    CONF_MQTT_ENABLED, default=bool(current.get(CONF_MQTT_ENABLED, False))
-                ): bool,
                 vol.Optional(
                     CONF_MQTT_HOST, default=current.get(CONF_MQTT_HOST, DEFAULT_MQTT_HOST)
                 ): str,
