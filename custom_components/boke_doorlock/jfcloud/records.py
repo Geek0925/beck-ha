@@ -9,7 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
 __all__ = ["OpenRecord", "METHOD_HINTS", "normalise_method", "dedupe"]
@@ -97,8 +97,23 @@ def _as_datetime(value: Any) -> datetime | None:
     return None
 
 
-def _as_local_datetime(value: Any) -> datetime | None:
-    """云端返回 "YYYY-MM-DD HH:MM:SS"（本地时间，无时区），按本地时区解析后转 UTC。"""
+def _device_tz(tz_name: str | None) -> timezone | Any:
+    """设备时区；拿不到就退回 UTC+8（云端时间戳都是北京时间）。"""
+    if tz_name:
+        try:
+            from zoneinfo import ZoneInfo
+
+            return ZoneInfo(tz_name)
+        except Exception:  # noqa: BLE001
+            pass
+    return timezone(timedelta(hours=8))
+
+
+def _as_local_datetime(value: Any, tz_name: str | None = None) -> datetime | None:
+    """云端返回 "YYYY-MM-DD HH:MM:SS"（设备本地时间，无时区标记）。
+
+    必须按**设备时区**解析，否则 HA 容器跑在 UTC 时会差 8 小时。
+    """
     if isinstance(value, str):
         text = value.strip()
         for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"):
@@ -106,7 +121,7 @@ def _as_local_datetime(value: Any) -> datetime | None:
                 parsed = datetime.strptime(text, fmt)
             except ValueError:
                 continue
-            return parsed.astimezone(timezone.utc)
+            return parsed.replace(tzinfo=_device_tz(tz_name)).astimezone(timezone.utc)
     return _as_datetime(value)
 
 
@@ -146,7 +161,9 @@ class OpenRecord:
         return "failed" not in self.method
 
     @classmethod
-    def from_alarm(cls, item: Mapping[str, Any], *, sn: str = "") -> "OpenRecord":
+    def from_alarm(
+        cls, item: Mapping[str, Any], *, sn: str = "", tz_name: str | None = None
+    ) -> "OpenRecord":
         """解析 ``getDeviceAlarmList`` 返回的 AlarmArray 条目。
 
         结构（实测）::
@@ -169,7 +186,7 @@ class OpenRecord:
         msg_type = message.get("MsgType") or message.get("msgType") or ""
         method = normalise_method(msg_type or event)
         identifier = item.get("AlarmId") or item.get("id")
-        timestamp = _as_local_datetime(item.get("AlarmTime") or item.get("alarmTime"))
+        timestamp = _as_local_datetime(item.get("AlarmTime") or item.get("alarmTime"), tz_name)
         if identifier in (None, ""):
             seed = f"{sn}|{event}|{timestamp}|{message.get('NickName')}"
             identifier = hashlib.sha1(seed.encode("utf-8")).hexdigest()[:16]

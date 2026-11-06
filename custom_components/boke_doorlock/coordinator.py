@@ -261,7 +261,12 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
                 continue
 
             previous = {record.record_id for record in self._records.get(sn, [])}
-            parsed = dedupe(OpenRecord.from_alarm(row, sn=sn) for row in rows)
+            tz_name = str(
+                (devices[sn].raw.get("timeZone") if sn in devices else "") or "Asia/Shanghai"
+            )
+            parsed = dedupe(
+                OpenRecord.from_alarm(row, sn=sn, tz_name=tz_name) for row in rows
+            )
             self._records[sn] = parsed[:200]
 
             for record in parsed:
