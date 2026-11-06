@@ -6,7 +6,7 @@ from datetime import timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed
 
 from .const import (
@@ -105,13 +105,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await _start_push(hass, coordinator, data)
     await _start_mqtt_safe(hass, entry, coordinator, data)
     await _publish_ha_discovery(hass, coordinator)
-    await _publish_ha_state(hass, coordinator)
-
-    @callback
-    def _on_update() -> None:
-        hass.async_create_task(_publish_ha_state(hass, coordinator))
-
-    entry.async_on_unload(coordinator.async_add_listener(_on_update))
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
@@ -133,24 +126,6 @@ async def _publish_ha_discovery(hass, coordinator) -> None:
         _LOGGER.info("已向 HA 内置 MQTT 发布门锁 Discovery")
     except Exception:  # noqa: BLE001
         _LOGGER.debug("HA MQTT Discovery 发布失败", exc_info=True)
-
-
-async def _publish_ha_state(hass, coordinator) -> None:
-    """把每台锁的最新状态推到 HA 内置 MQTT。"""
-    try:
-        from .jfcloud.ha_mqtt import async_publish_snapshot, ha_mqtt_available
-
-        if not ha_mqtt_available(hass) or not coordinator.data:
-            return
-        for sn in coordinator.data.devices:
-            await async_publish_snapshot(
-                hass,
-                sn,
-                coordinator.data.status(sn),
-                coordinator.data.last_record(sn),
-            )
-    except Exception:  # noqa: BLE001
-        _LOGGER.debug("HA MQTT 状态推送失败", exc_info=True)
 
 
 async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
@@ -192,6 +167,16 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
             sn = event.get("sn")
             if event.get("kind") == "props" and sn:
                 coordinator.async_apply_push(sn, event.get("props") or {})
+                if ha_mqtt_available(hass):
+                    props = event.get("props") or {}
+                    if props.get("battery") is not None:
+                        await async_publish(hass, f"boke_doorlock/{sn}/battery", str(props["battery"]))
+                    if props.get("wifi_name"):
+                        await async_publish(hass, f"boke_doorlock/{sn}/wifi", str(props["wifi_name"]))
+                    if props.get("signal") is not None:
+                        await async_publish(hass, f"boke_doorlock/{sn}/signal", str(props["signal"]))
+                    if props.get("lock_state") is not None:
+                        await async_publish(hass, f"boke_doorlock/{sn}/online", "ON")
             elif event.get("kind") == "alarm":
                 from .const import EVENT_UNLOCK
 
