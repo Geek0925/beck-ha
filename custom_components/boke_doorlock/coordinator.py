@@ -221,6 +221,11 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
         except JFCloudError as err:
             raise UpdateFailed(str(err)) from err
 
+    @callback
+    def reset_record_timer(self) -> None:
+        """手动刷新时清掉节流计时，保证记录会重新拉取。"""
+        self._last_record_fetch = 0.0
+
     async def _async_refresh_records(self, devices: dict[str, LockDevice]) -> None:
         if self.record_interval <= 0:
             return  # 0 = 关闭记录拉取

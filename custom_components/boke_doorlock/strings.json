@@ -87,6 +87,11 @@
       "online": {
         "name": "在线"
       }
+    },
+    "button": {
+      "refresh": {
+        "name": "立即刷新"
+      }
     }
   },
   "services": {
