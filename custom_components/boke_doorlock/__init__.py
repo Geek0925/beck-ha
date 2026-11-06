@@ -95,28 +95,31 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS_LIST)
     await async_setup_services(hass)
     await _start_mqtt_safe(hass, entry, coordinator, data)
-    await _publish_ha_discovery(hass, coordinator)
+    await _cleanup_ha_discovery(hass, coordinator)
 
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
     return True
 
 
-async def _publish_ha_discovery(hass, coordinator) -> None:
-    """把门锁注册到 HA 内置 MQTT（用户无需配置任何 broker 凭据）。"""
+async def _cleanup_ha_discovery(hass, coordinator) -> None:
+    """删除早期版本注册到 HA MQTT 的 Discovery 实体。
+
+    REST 数据只更新原生实体；MQTT 只用于转发官方推送，因此不再注册
+    Discovery（否则会留下永远为空、和原生实体重复的实体）。
+    """
     try:
-        from .jfcloud.ha_mqtt import async_publish_discovery, ha_mqtt_available
+        from .jfcloud.ha_mqtt import discovery_payloads, ha_mqtt_available, async_publish
 
         if not ha_mqtt_available(hass):
             return
-        devices = getattr(coordinator, "devices", None) or (
-            coordinator.data.devices if coordinator.data else {}
-        )
-        for sn, dev in (devices.items() if hasattr(devices, "items") else []):
-            name = getattr(dev, "name", None) or sn
-            await async_publish_discovery(hass, sn, name)
-        _LOGGER.info("已向 HA 内置 MQTT 发布门锁 Discovery")
+        devices = coordinator.data.devices if coordinator.data else {}
+        for sn in devices:
+            for topic, _payload in discovery_payloads(sn, sn):
+                # 空 payload + retain 会删除该 Discovery 实体
+                await async_publish(hass, topic, "")
+        _LOGGER.debug("已清理 HA MQTT Discovery 实体")
     except Exception:  # noqa: BLE001
-        _LOGGER.debug("HA MQTT Discovery 发布失败", exc_info=True)
+        _LOGGER.debug("清理 HA MQTT Discovery 失败", exc_info=True)
 
 
 async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
