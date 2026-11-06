@@ -222,6 +222,8 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
             raise UpdateFailed(str(err)) from err
 
     async def _async_refresh_records(self, devices: dict[str, LockDevice]) -> None:
+        if self.record_interval <= 0:
+            return  # 0 = 关闭记录拉取
         now = time.monotonic()
         if self._last_record_fetch and now - self._last_record_fetch < self.record_interval:
             return

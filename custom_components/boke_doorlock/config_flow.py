@@ -204,36 +204,12 @@ class BokeOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_RECORD_INTERVAL,
                     default=current.get(CONF_RECORD_INTERVAL, DEFAULT_RECORD_INTERVAL),
-                ): vol.All(int, vol.Range(min=60, max=3600)),
+                ): vol.All(int, vol.Range(min=0, max=3600)),
                 vol.Optional(
                     CONF_ALERT_RESET,
                     default=int(current.get(CONF_ALERT_RESET, DEFAULT_ALERT_RESET)),
                 ): vol.All(int, vol.Range(min=0, max=86400)),
                 vol.Optional(CONF_SNS, default=current.get(CONF_SNS, "")): str,
-                vol.Optional(
-                    CONF_MQTT_HOST, default=current.get(CONF_MQTT_HOST, DEFAULT_MQTT_HOST)
-                ): str,
-                vol.Optional(
-                    CONF_MQTT_PORT,
-                    default=int(current.get(CONF_MQTT_PORT, DEFAULT_MQTT_PORT)),
-                ): vol.All(int, vol.Range(min=1, max=65535)),
-                vol.Optional(
-                    CONF_MQTT_TLS, default=bool(current.get(CONF_MQTT_TLS, True))
-                ): bool,
-                vol.Optional(
-                    CONF_MQTT_USERNAME, default=current.get(CONF_MQTT_USERNAME, "")
-                ): str,
-                vol.Optional(
-                    CONF_MQTT_PASSWORD, default=current.get(CONF_MQTT_PASSWORD, "")
-                ): str,
-                vol.Optional(
-                    CONF_MQTT_TOPICS,
-                    default=current.get(CONF_MQTT_TOPICS, DEFAULT_MQTT_TOPICS),
-                ): str,
-                vol.Optional(
-                    CONF_MQTT_LOG_PAYLOADS,
-                    default=bool(current.get(CONF_MQTT_LOG_PAYLOADS, True)),
-                ): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
