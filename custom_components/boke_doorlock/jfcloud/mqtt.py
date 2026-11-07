@@ -23,6 +23,7 @@ import base64
 import json
 import logging
 import ssl
+import time
 from typing import Any, Callable, Iterable
 
 _LOGGER = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ class JFMQTTClient:
         self.client_id = client_id or "mini:boke_doorlock"
         self._client: Any = None
         self._connected = False
+        self._stopping = False
 
     @property
     def topics(self) -> list[str]:
@@ -102,7 +104,11 @@ class JFMQTTClient:
             protocol=mqtt.MQTTv311,
         )
         client.username_pw_set(self.account, self.token)
-        ctx = ssl.create_default_context()
+        # create_default_context() 会读证书文件，在事件循环里属于阻塞调用，
+        # HA 会拦截它，所以放到线程池执行。
+        ctx = await asyncio.get_running_loop().run_in_executor(
+            None, ssl.create_default_context
+        )
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
         client.tls_set_context(ctx)
@@ -129,7 +135,17 @@ class JFMQTTClient:
         self._client = client
 
         def _run() -> None:
-            client.connect(self.host, self.port, keepalive=30)
+            # 首次握手可能因网络/云端抖动失败，失败后自己重试，
+            # 否则线程直接退出，之后再也连不上（只能等集成重载）。
+            while not self._stopping:
+                try:
+                    client.connect(self.host, self.port, keepalive=30)
+                    break
+                except Exception as err:  # noqa: BLE001
+                    _LOGGER.warning("MQTT 连接失败，5 秒后重试: %s", err)
+                    time.sleep(5)
+            if self._stopping:
+                return
             client.loop_forever(retry_first_connection=True)
 
         loop = asyncio.get_running_loop()
@@ -138,6 +154,7 @@ class JFMQTTClient:
         return self._connected
 
     async def async_stop(self) -> None:
+        self._stopping = True
         if not self._client:
             return
         try:
