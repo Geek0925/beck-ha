@@ -655,8 +655,12 @@ class JFCloudClient:
             reg = _plain("cfgRegister", {})
             if reg.get("code") == 2000 and isinstance(reg.get("data"), str):
                 node = reg["data"]
+            else:
+                # 这一步失败时 MQTT 仍能连上，但云端不会推送任何消息，
+                # 所以必须让它在日志里可见，而不是悄悄吞掉。
+                _LOGGER.warning("cfgRegister 未返回 MQTT 节点: %s", str(reg)[:300])
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("cfgRegister failed: %s", err)
+            _LOGGER.warning("cfgRegister failed: %s", err)
 
         try:
             tokens = await self.get_device_token(want)
@@ -664,9 +668,15 @@ class JFCloudClient:
                 {"sn": sn, "token": tok} for sn, tok in tokens.items() if tok
             ]
             if subscribe_list:
-                _plain("batchSubscribe", {"subscribeList": subscribe_list})
+                result = _plain("batchSubscribe", {"subscribeList": subscribe_list})
+                if result.get("code") != 2000:
+                    _LOGGER.warning("batchSubscribe 未成功: %s", str(result)[:300])
+                else:
+                    _LOGGER.info("已注册 %d 个设备的消息推送", len(subscribe_list))
+            else:
+                _LOGGER.warning("batchSubscribe 跳过：没有拿到设备 token")
         except Exception as err:  # noqa: BLE001
-            _LOGGER.debug("batchSubscribe failed: %s", err)
+            _LOGGER.warning("batchSubscribe failed: %s", err)
         return node
 
     async def get_status_global(self, sns: Iterable[str]) -> dict[str, dict[str, Any]]:

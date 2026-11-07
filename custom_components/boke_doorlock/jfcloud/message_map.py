@@ -47,6 +47,35 @@ UNLOCK_METHODS: dict[str, str] = {
     "temporary": "临时密码",
 }
 
+#: ``AlarmEvent`` 取值 → 中文描述（云端 alarmEvent 报文里实际使用的字段名）
+ALARM_EVENTS: dict[str, str] = {
+    "doorlockopen": "开门",
+    "doorlockclose": "关门",
+    "doorlockalarm": "门锁报警",
+    "doorlocktamper": "防拆报警",
+    "doorlocklowpower": "低电量",
+    "doorbellring": "门铃呼叫",
+}
+
+#: ``AlarmMsg.MsgType`` → 内部 slug（与 records.METHOD_HINTS 的取值保持一致，
+#: 这样 event 实体才能把它识别成一个可触发的事件类型）
+MSG_TYPE_SLUGS: dict[str, str] = {
+    "fingerprint": "fingerprint",
+    "fingerprintmanager": "fingerprint",
+    "fingerprintmanger": "fingerprint",
+    "password": "password",
+    "passwd": "password",
+    "passwdmanager": "password",
+    "passwdmanger": "password",
+    "card": "card",
+    "key": "key",
+    "remote": "remote",
+    "face": "face",
+    "app": "app",
+    "temporary": "temporary",
+    "temp": "temporary",
+}
+
 #: 属性名别名 → 内部字段
 PROP_ALIASES: dict[str, str] = {
     "lockstate": "lock_state",
@@ -54,6 +83,8 @@ PROP_ALIASES: dict[str, str] = {
     "doorstate": "door_state",
     "battery": "battery",
     "batterylevel": "battery",
+    # 云端 props 推送里电量用的是 batteryPower，原先不在别名表里导致整条消息被丢弃
+    "batterypower": "battery",
     "electricquantity": "battery",
     "online": "online",
     "onlinestatus": "online",
@@ -100,19 +131,61 @@ def parse_props(data: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _alarm_msg(data: dict[str, Any]) -> dict[str, Any]:
+    """展开 ``AlarmMsg``——云端把它塞成了一个 JSON 字符串。
+
+    真实报文长这样::
+
+        {"AlarmEvent":"DoorLockOpen","AlarmMsg":"{\\"MsgType\\":\\"FingerPrint\\",
+         \\"NickName\\":\\"莹莹\\",\\"UserId\\":\\"018\\"}", "AlarmTime":"..."}
+
+    开锁方式和开门人只存在这个内层 JSON 里，不展开就永远取不到。
+    """
+    raw = data.get("AlarmMsg")
+    if isinstance(raw, dict):
+        return raw
+    if isinstance(raw, str) and raw.strip().startswith("{"):
+        parsed = _payload_dict(raw)
+        if parsed:
+            return parsed
+    return {}
+
+
 def parse_alarm(data: dict[str, Any]) -> dict[str, Any]:
     """解析报警/开门事件。"""
+    msg = _alarm_msg(data)
+    event_key = str(data.get("AlarmEvent") or "").lower()
+
     reason_code = _to_int(data.get("alarmReason"))
     if reason_code is None:
         reason_code = _to_int(data.get("alarmType"))
-    method_raw = str(data.get("openType") or data.get("unlockType") or "").lower()
+
+    # 开锁方式：优先内层 AlarmMsg.MsgType，其次老的 openType/unlockType
+    method_raw = str(
+        msg.get("MsgType")
+        or data.get("openType")
+        or data.get("unlockType")
+        or ""
+    )
+    method_key = method_raw.lower()
+    method_slug = MSG_TYPE_SLUGS.get(method_key, "")
+
+    if reason_code is not None:
+        reason = ALARM_REASONS.get(reason_code, ALARM_EVENTS.get(event_key, "未知事件"))
+    else:
+        reason = ALARM_EVENTS.get(event_key, "未知事件")
+
     return {
         "sn": data.get("SerialNumber") or data.get("deviceNo") or data.get("sn"),
+        "message_id": str(data.get("AlarmID") or "") or None,
+        "event": data.get("AlarmEvent"),
         "reason_code": reason_code,
-        "reason": ALARM_REASONS.get(reason_code or -1, "未知事件"),
-        "method": UNLOCK_METHODS.get(method_raw, method_raw or None),
-        "user": data.get("nickName") or data.get("userName"),
-        "time": data.get("time") or data.get("createTime"),
+        "reason": reason,
+        "method": UNLOCK_METHODS.get(method_key) or (method_raw or None),
+        "method_slug": method_slug,
+        "user": msg.get("NickName") or data.get("nickName") or data.get("userName"),
+        "user_type": msg.get("UserType"),
+        "time": data.get("AlarmTime") or data.get("time") or data.get("createTime"),
         "raw": data,
     }
 
@@ -128,9 +201,10 @@ def classify(topic: str, payload: bytes | str) -> dict[str, Any] | None:
         return event
     props = parse_props(data)
     if props:
-        return {"kind": "props", "sn": data.get("SerialNumber") or data.get("deviceNo"),
+        return {"kind": "props",
+                "sn": data.get("SerialNumber") or data.get("deviceNo") or data.get("sn"),
                 "props": props, "raw": data}
-    if data.get("SerialNumber") or data.get("deviceNo"):
+    if data.get("SerialNumber") or data.get("deviceNo") or data.get("AlarmEvent"):
         event = parse_alarm(data)
         event["kind"] = "alarm"
         return event

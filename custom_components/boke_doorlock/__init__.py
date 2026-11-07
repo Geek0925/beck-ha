@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
@@ -122,6 +122,48 @@ async def _cleanup_ha_discovery(hass, coordinator) -> None:
         _LOGGER.debug("清理 HA MQTT Discovery 失败", exc_info=True)
 
 
+def _parse_alarm_time(value) -> datetime | None:
+    """把云端 ``AlarmTime`` 之类的字符串转成 datetime。"""
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f", "%Y/%m/%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _notify_event_entity(hass, sn: str, event: dict) -> None:
+    """把 MQTT 推送转成 event 实体能识别的通知。
+
+    原先 MQTT 只 ``hass.bus.async_fire``，event 实体收不到任何东西，
+    导致基于 event 实体的自动化对开门事件毫无反应。
+    """
+    from homeassistant.helpers.dispatcher import async_dispatcher_send
+
+    from .coordinator import message_signal
+    from .jfcloud.messages import Notification
+
+    stamp = _parse_alarm_time(event.get("time"))
+    message_id = event.get("message_id") or f"{sn}-{event.get('time') or ''}"
+    notification = Notification(
+        message_id=str(message_id),
+        sn=sn,
+        msg_type=event.get("method_slug") or "",
+        timestamp=stamp,
+        user_name=event.get("user"),
+        user_type=event.get("user_type"),
+        image_url=None,
+        raw=event.get("raw") or {},
+    )
+    async_dispatcher_send(hass, message_signal(sn), notification)
+
+
 async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
     """按小程序完整链路接入实时消息。
 
@@ -152,7 +194,7 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
             if node:
                 _LOGGER.info("已注册设备消息推送，节点 %s", node)
         except Exception:  # noqa: BLE001
-            _LOGGER.debug("消息推送注册失败", exc_info=True)
+            _LOGGER.warning("消息推送注册失败，云端不会推送开门事件", exc_info=True)
 
         def _on_event(topic: str, payload: bytes) -> None:
             hass.loop.call_soon_threadsafe(_dispatch, topic, payload)
@@ -183,12 +225,17 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
                     if props.get("signal") is not None:
                         await async_publish(hass, f"boke_doorlock/{sn}/signal", str(props["signal"]))
             elif event.get("kind") == "alarm":
+                if sn:
+                    _notify_event_entity(hass, sn, event)
                 hass.bus.async_fire(
                     EVENT_UNLOCK,
                     {
                         "sn": sn,
                         "method": event.get("method"),
+                        "method_slug": event.get("method_slug"),
+                        "reason": event.get("reason"),
                         "user": event.get("user"),
+                        "user_type": event.get("user_type"),
                         "timestamp": event.get("time"),
                         "source": "mqtt",
                     },
@@ -203,7 +250,7 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
 
             entry.async_on_unload(_stop_listener)
         else:
-            _LOGGER.debug("官方 MQTT 未连接（不影响其他功能）")
+            _LOGGER.info("官方 MQTT 未在 2 秒内连上（后台会继续重连）")
     except Exception:  # noqa: BLE001
         _LOGGER.debug("官方 MQTT 启动失败", exc_info=True)
 
