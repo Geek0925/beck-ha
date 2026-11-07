@@ -227,6 +227,10 @@ async def _start_mqtt_safe(hass, entry, coordinator, data) -> None:
             elif event.get("kind") == "alarm":
                 if sn:
                     _notify_event_entity(hass, sn, event)
+                    coordinator.mark_record_known(event.get("message_id"))
+                    # 事件驱动模式下协调器不会周期刷新，这里补一次，
+                    # 否则 last_unlock_* 传感器永远停在启动时的值。
+                    await coordinator.async_force_refresh_records()
                 hass.bus.async_fire(
                     EVENT_UNLOCK,
                     {

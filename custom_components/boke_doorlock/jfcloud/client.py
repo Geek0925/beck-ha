@@ -636,7 +636,7 @@ class JFCloudClient:
         if not want or not self.token:
             return None
 
-        def _plain(path: str, body: Mapping[str, Any]) -> dict[str, Any]:
+        async def _plain(path: str, body: Mapping[str, Any]) -> dict[str, Any]:
             time_millis, signature = self._sign_pair()
             url = f"https://{self.host}/wx/device/message/{path}"
             headers = {
@@ -648,11 +648,16 @@ class JFCloudClient:
                 "signature": signature,
                 "Authorization": self.token or "",
             }
-            return _urllib_request_sync(url, json.dumps(body).encode(), headers, self.timeout)
+            payload = json.dumps(body).encode()
+            # urllib 是阻塞调用，直接跑会被 HA 的 blocking-call 保护拦截，
+            # 导致推送注册永远失败（MQTT 能连上但收不到任何推送）。
+            return await asyncio.get_running_loop().run_in_executor(
+                None, _urllib_request_sync, url, payload, headers, self.timeout
+            )
 
         node: str | None = None
         try:
-            reg = _plain("cfgRegister", {})
+            reg = await _plain("cfgRegister", {})
             if reg.get("code") == 2000 and isinstance(reg.get("data"), str):
                 node = reg["data"]
             else:
@@ -668,7 +673,7 @@ class JFCloudClient:
                 {"sn": sn, "token": tok} for sn, tok in tokens.items() if tok
             ]
             if subscribe_list:
-                result = _plain("batchSubscribe", {"subscribeList": subscribe_list})
+                result = await _plain("batchSubscribe", {"subscribeList": subscribe_list})
                 if result.get("code") != 2000:
                     _LOGGER.warning("batchSubscribe 未成功: %s", str(result)[:300])
                 else:

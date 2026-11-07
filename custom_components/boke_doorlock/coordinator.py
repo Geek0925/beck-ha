@@ -243,11 +243,17 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
         """手动刷新时清掉节流计时，保证记录会重新拉取。"""
         self._last_record_fetch = 0.0
 
-    async def _async_refresh_records(self, devices: dict[str, LockDevice]) -> None:
-        if self.record_interval <= 0:
-            return  # 0 = 关闭记录拉取
+    async def _async_refresh_records(
+        self, devices: dict[str, LockDevice], *, force: bool = False
+    ) -> None:
+        if self.record_interval <= 0 and not force:
+            return  # 0 = 关闭周期性记录拉取，但 MQTT 事件仍可强制刷新
         now = time.monotonic()
-        if self._last_record_fetch and now - self._last_record_fetch < self.record_interval:
+        if (
+            not force
+            and self._last_record_fetch
+            and now - self._last_record_fetch < self.record_interval
+        ):
             return
         self._last_record_fetch = now
 
@@ -289,6 +295,26 @@ class BokeCoordinator(DataUpdateCoordinator[BokeData]):
         _LOGGER.debug("unlock record: %s", payload)
         self.hass.bus.async_fire(EVENT_UNLOCK, payload)
         async_dispatcher_send(self.hass, record_signal(sn), record)
+
+    async def async_force_refresh_records(self) -> None:
+        """立刻拉一次开锁记录。
+
+        ``scan_interval`` 为 0（事件驱动模式）时协调器不会周期性刷新，
+        开锁记录原本只在启动那一刻拉过一次，``last_unlock_*`` 传感器
+        之后永远不动。MQTT 收到开门推送时调用这里补上这一步。
+        """
+        if not self.data:
+            return
+        try:
+            await self._async_refresh_records(self.data.devices, force=True)
+        except JFCloudError as err:
+            _LOGGER.debug("强制刷新开锁记录失败: %s", err)
+
+    @callback
+    def mark_record_known(self, record_id: str | None) -> None:
+        """把已经由 MQTT 处理过的记录标记为已知，避免记录刷新时重复触发。"""
+        if record_id:
+            self._known_record_ids.add(str(record_id))
 
     async def _async_refresh_notifications(
         self, devices: dict[str, LockDevice]
