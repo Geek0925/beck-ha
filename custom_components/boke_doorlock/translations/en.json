@@ -1,0 +1,118 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "BOKE Door Lock · Sign in",
+        "description": "Sign in with your iCSee Home (formerly JLink) account: phone or e-mail + password. The password is sent MD5-hashed by default; change it under Advanced.",
+        "data": {
+          "username": "Phone / e-mail",
+          "password": "Password",
+          "area_code": "Area code",
+          "sns": "Only these SNs (comma separated, optional)"
+        }
+      },
+      "advanced": {
+        "title": "BOKE Door Lock · Advanced",
+        "description": "Use this if login fails: switch API host, password encoding, or override the appKey/appSecret used for request signing.",
+        "data": {
+          "username": "Phone / e-mail",
+          "password": "Password",
+          "area_code": "Area code",
+          "host": "API host",
+          "password_encoding": "Password encoding",
+          "app_key": "appKey",
+          "app_secret": "appSecret"
+        }
+      }
+    },
+    "error": {
+      "invalid_auth": "Wrong account or password",
+      "cannot_connect": "Cannot reach the cloud",
+      "no_devices": "No devices on this account",
+      "cloud_error": "Cloud returned an error, see logs"
+    },
+    "abort": {
+      "already_configured": "This account is already configured"
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "BOKE Door Lock · Options",
+        "description": "MQTT push is experimental: the vendor app uses a private broker inside the hardened layer. Enable payload logging to learn the real topic tree.",
+        "data": {
+          "scan_interval": "Poll interval (s)",
+          "record_interval": "Record poll interval (s)",
+          "sns": "Only these SNs (comma separated, optional)",
+          "mqtt_enabled": "Enable MQTT push",
+          "mqtt_host": "MQTT broker",
+          "mqtt_port": "MQTT port",
+          "mqtt_tls": "MQTT over TLS",
+          "mqtt_username": "MQTT username",
+          "mqtt_password": "MQTT password / device token",
+          "mqtt_topics": "Topics (comma separated, # wildcard)",
+          "mqtt_log_payloads": "Log every payload (debugging)",
+          "alert_reset": "Alert auto-clear (s, 0 = sticky)"
+        }
+      }
+    }
+  },
+  "entity": {
+    "event": {
+      "unlock": {
+        "name": "Unlock event"
+      }
+    },
+    "sensor": {
+      "battery": {
+        "name": "Battery"
+      },
+      "last_unlock_user": {
+        "name": "Last unlock user"
+      },
+      "signal": {
+        "name": "Wi-Fi signal"
+      },
+      "last_unlock_method": {
+        "name": "Last unlock method"
+      },
+      "last_unlock_at": {
+        "name": "Last unlock at"
+      },
+      "wifi_name": {
+        "name": "Wi-Fi 名称"
+      },
+      "room": {
+        "name": "Room"
+      }
+    },
+    "binary_sensor": {
+      "online": {
+        "name": "在线"
+      }
+    },
+    "button": {
+      "refresh": {
+        "name": "Refresh now"
+      }
+    }
+  },
+  "services": {
+    "get_unlock_records": {
+      "name": "Get unlock records",
+      "description": "Fetch unlock records (method, user, image) for a time window.",
+      "fields": {
+        "sn": {
+          "name": "Device SN",
+          "description": "Empty means every lock"
+        },
+        "hours": {
+          "name": "Hours back"
+        },
+        "limit": {
+          "name": "Max records"
+        }
+      }
+    }
+  }
+}
